@@ -1,0 +1,68 @@
+{"operationUpdate": {"workflowId": "user-api-workflow", "operations": [
+  {"id": "fetch-users", "operation": {
+    "ApiCall": {
+      "method": "GET",
+      "url": "https://api.example.com/users",
+      "headers": {
+        "Authorization": {"path": "/config/apiToken"}
+      },
+      "outputPath": "/workflow/api-response"
+    }
+  }},
+  {"id": "extract-users", "operation": {
+    "TransformData": {
+      "inputPath": "/workflow/api-response",
+      "transform": "select",
+      "config": {
+        "field": "data.users"
+      },
+      "outputPath": "/workflow/users"
+    }
+  }},
+  {"id": "filter-active", "operation": {
+    "FilterData": {
+      "inputPath": "/workflow/users",
+      "conditions": [
+        {"field": "points", "operator": ">", "value": 100},
+        {"field": "status", "operator": "==", "value": "active"}
+      ],
+      "outputPath": "/workflow/filtered-users"
+    }
+  }},
+  {"id": "check-count", "operation": {
+    "Conditional": {
+      "condition": {
+        "path": "/workflow/filtered-users",
+        "operator": ">",
+        "value": {"path": "/workflow/filtered-users", "transform": "length"}
+      },
+      "ifTrue": "store-result",
+      "ifFalse": "log-empty"
+    }
+  }},
+  {"id": "store-result", "operation": {
+    "StoreData": {
+      "inputPath": "/workflow/filtered-users",
+      "storage": "localStorage",
+      "key": "active-users",
+      "format": "json"
+    }
+  }},
+  {"id": "log-empty", "operation": {
+    "StoreData": {
+      "inputPath": "/workflow/filtered-users",
+      "storage": "localStorage",
+      "key": "empty-result",
+      "format": "json"
+    }
+  }}
+]}}
+
+{"dataModelUpdate": {"workflowId": "user-api-workflow", "contents": [
+  {"key": "config", "valueMap": [
+    {"key": "apiToken", "valueString": "Bearer abc123"}
+  ]}
+]}}
+
+{"beginExecution": {"workflowId": "user-api-workflow", "root": "fetch-users"}}
+

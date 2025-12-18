@@ -1,0 +1,189 @@
+{
+  "catalogId": "workflow-operations-v1",
+  "description": "Catálogo de operaciones para ejecución de workflows",
+  "operations": {
+    "ApiCall": {
+      "type": "object",
+      "description": "Realiza una llamada HTTP a una API",
+      "properties": {
+        "method": {
+          "type": "string",
+          "enum": ["GET", "POST", "PUT", "DELETE", "PATCH"],
+          "description": "Método HTTP a usar"
+        },
+        "url": {
+          "type": "string",
+          "description": "URL del endpoint. Puede usar variables del data model con {path}"
+        },
+        "headers": {
+          "type": "object",
+          "description": "Headers HTTP. Valores pueden ser literales o paths al data model"
+        },
+        "body": {
+          "type": "object",
+          "description": "Cuerpo de la petición (para POST/PUT). Puede referenciar data model"
+        },
+        "outputPath": {
+          "type": "string",
+          "description": "Ruta en el data model donde guardar la respuesta"
+        },
+        "timeout": {
+          "type": "number",
+          "description": "Timeout en milisegundos (opcional)"
+        }
+      },
+      "required": ["method", "url", "outputPath"]
+    },
+    
+    "FilterData": {
+      "type": "object",
+      "description": "Filtra datos de un array usando condiciones",
+      "properties": {
+        "inputPath": {
+          "type": "string",
+          "description": "Ruta al array en el data model"
+        },
+        "conditions": {
+          "type": "array",
+          "description": "Lista de condiciones de filtrado",
+          "items": {
+            "type": "object",
+            "properties": {
+              "field": {"type": "string"},
+              "operator": {
+                "type": "string",
+                "enum": ["==", "!=", ">", "<", ">=", "<=", "contains", "startsWith", "endsWith"]
+              },
+              "value": {
+                "type": ["string", "number", "boolean", "object"],
+                "description": "Valor a comparar. Puede ser literal o path"
+              }
+            },
+            "required": ["field", "operator"]
+          }
+        },
+        "outputPath": {
+          "type": "string",
+          "description": "Ruta donde guardar el resultado filtrado"
+        }
+      },
+      "required": ["inputPath", "outputPath"]
+    },
+    
+    "TransformData": {
+      "type": "object",
+      "description": "Transforma datos usando operaciones comunes",
+      "properties": {
+        "inputPath": {"type": "string"},
+        "transform": {
+          "type": "string",
+          "enum": ["map", "reduce", "sort", "groupBy", "select", "aggregate"],
+          "description": "Tipo de transformación"
+        },
+        "config": {
+          "type": "object",
+          "description": "Configuración específica de la transformación"
+        },
+        "outputPath": {"type": "string"}
+      },
+      "required": ["inputPath", "transform", "outputPath"]
+    },
+    
+    "Conditional": {
+      "type": "object",
+      "description": "Ejecuta operaciones condicionalmente",
+      "properties": {
+        "condition": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string"},
+            "operator": {"type": "string", "enum": ["==", "!=", ">", "<", "exists", "isEmpty"]},
+            "value": {"type": ["string", "number", "boolean"]}
+          }
+        },
+        "ifTrue": {
+          "type": "string",
+          "description": "ID de la operación a ejecutar si la condición es verdadera"
+        },
+        "ifFalse": {
+          "type": "string",
+          "description": "ID de la operación a ejecutar si la condición es falsa"
+        }
+      },
+      "required": ["condition", "ifTrue"]
+    },
+    
+    "StoreData": {
+      "type": "object",
+      "description": "Almacena datos en storage local o remoto",
+      "properties": {
+        "inputPath": {"type": "string"},
+        "storage": {
+          "type": "string",
+          "enum": ["localStorage", "sessionStorage", "indexedDB", "database"],
+          "description": "Tipo de almacenamiento"
+        },
+        "key": {"type": "string"},
+        "format": {
+          "type": "string",
+          "enum": ["json", "string", "binary"],
+          "description": "Formato de almacenamiento"
+        }
+      },
+      "required": ["inputPath", "storage", "key"]
+    },
+    
+    "Wait": {
+      "type": "object",
+      "description": "Espera un tiempo antes de continuar",
+      "properties": {
+        "duration": {
+          "type": "number",
+          "description": "Duración en milisegundos"
+        }
+      },
+      "required": ["duration"]
+    },
+    
+    "Loop": {
+      "type": "object",
+      "description": "Ejecuta operaciones en un loop",
+      "properties": {
+        "inputPath": {
+          "type": "string",
+          "description": "Ruta al array sobre el que iterar"
+        },
+        "operations": {
+          "type": "array",
+          "description": "IDs de operaciones a ejecutar por cada item",
+          "items": {"type": "string"}
+        },
+        "outputPath": {
+          "type": "string",
+          "description": "Ruta donde guardar resultados del loop"
+        }
+      },
+      "required": ["inputPath", "operations"]
+    },
+    
+    "MergeData": {
+      "type": "object",
+      "description": "Combina datos de múltiples fuentes",
+      "properties": {
+        "sources": {
+          "type": "array",
+          "description": "Rutas a los datos a combinar",
+          "items": {"type": "string"}
+        },
+        "strategy": {
+          "type": "string",
+          "enum": ["merge", "concat", "intersect", "union"],
+          "description": "Estrategia de combinación"
+        },
+        "outputPath": {"type": "string"}
+      },
+      "required": ["sources", "strategy", "outputPath"]
+    }
+  }
+}
+

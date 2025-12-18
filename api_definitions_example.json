@@ -1,0 +1,168 @@
+{
+  "apis": {
+    "user-api": {
+      "id": "user-api",
+      "baseUrl": "https://api.example.com",
+      "authentication": {
+        "type": "bearer",
+        "tokenPath": "/config/apiToken"
+      },
+      "endpoints": [
+        {
+          "path": "/users",
+          "method": "GET",
+          "description": "Obtiene lista de usuarios. Soporta filtros opcionales por status y puntos mínimos.",
+          "parameters": [
+            {
+              "name": "status",
+              "type": "string",
+              "optional": true,
+              "description": "Filtrar por estado: 'active', 'inactive', 'pending'",
+              "enum": ["active", "inactive", "pending"]
+            },
+            {
+              "name": "minPoints",
+              "type": "number",
+              "optional": true,
+              "description": "Filtrar usuarios con puntos mayores o iguales a este valor"
+            },
+            {
+              "name": "limit",
+              "type": "number",
+              "optional": true,
+              "description": "Número máximo de resultados a retornar",
+              "default": 100
+            }
+          ],
+          "responseSchema": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {"type": "string"},
+                "name": {"type": "string"},
+                "email": {"type": "string"},
+                "points": {"type": "number"},
+                "status": {"type": "string"}
+              }
+            }
+          }
+        },
+        {
+          "path": "/users/{userId}",
+          "method": "GET",
+          "description": "Obtiene información detallada de un usuario específico por su ID",
+          "parameters": [
+            {
+              "name": "userId",
+              "type": "string",
+              "required": true,
+              "in": "path",
+              "description": "ID único del usuario"
+            }
+          ],
+          "responseSchema": {
+            "type": "object",
+            "properties": {
+              "id": {"type": "string"},
+              "name": {"type": "string"},
+              "email": {"type": "string"},
+              "points": {"type": "number"},
+              "status": {"type": "string"},
+              "createdAt": {"type": "string", "format": "date-time"}
+            }
+          }
+        },
+        {
+          "path": "/users",
+          "method": "POST",
+          "description": "Crea un nuevo usuario",
+          "parameters": [
+            {
+              "name": "name",
+              "type": "string",
+              "required": true,
+              "description": "Nombre del usuario"
+            },
+            {
+              "name": "email",
+              "type": "string",
+              "required": true,
+              "description": "Email del usuario"
+            }
+          ],
+          "responseSchema": {
+            "type": "object",
+            "properties": {
+              "id": {"type": "string"},
+              "created": {"type": "boolean"}
+            }
+          }
+        }
+      ]
+    },
+    "product-api": {
+      "id": "product-api",
+      "baseUrl": "https://api.example.com",
+      "authentication": {
+        "type": "bearer",
+        "tokenPath": "/config/apiToken"
+      },
+      "endpoints": [
+        {
+          "path": "/products",
+          "method": "GET",
+          "description": "Obtiene lista de productos con filtros opcionales por categoría y rango de precios",
+          "parameters": [
+            {
+              "name": "category",
+              "type": "string",
+              "optional": true,
+              "description": "Filtrar por categoría de producto"
+            },
+            {
+              "name": "priceMin",
+              "type": "number",
+              "optional": true,
+              "description": "Precio mínimo"
+            },
+            {
+              "name": "priceMax",
+              "type": "number",
+              "optional": true,
+              "description": "Precio máximo"
+            }
+          ],
+          "responseSchema": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {"type": "string"},
+                "name": {"type": "string"},
+                "category": {"type": "string"},
+                "price": {"type": "number"}
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "operations": {
+    "ApiCall": {
+      "description": "Realiza una llamada HTTP a una API permitida",
+      "constraints": {
+        "allowedDomains": ["api.example.com"],
+        "allowedMethods": ["GET", "POST", "PUT", "DELETE"]
+      }
+    },
+    "FilterData": {
+      "description": "Filtra datos de un array usando condiciones"
+    },
+    "TransformData": {
+      "description": "Transforma datos usando operaciones comunes"
+    }
+  }
+}
+

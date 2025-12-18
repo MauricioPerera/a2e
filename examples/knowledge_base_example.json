@@ -1,0 +1,48 @@
+{
+  "id": "workflow-patterns",
+  "type": "pattern",
+  "description": "Patrones comunes de workflows para A2E",
+  "items": [
+    {
+      "id": "pattern-api-filter-store",
+      "title": "Patrón: API → Filtrar → Almacenar",
+      "description": "Patrón común: consultar API, filtrar resultados, almacenar datos filtrados",
+      "pattern": {
+        "operations": ["ApiCall", "FilterData", "StoreData"],
+        "flow": "api -> filter -> store",
+        "use_case": "Obtener datos de API, procesarlos y guardarlos"
+      },
+      "example": {
+        "query": "Consulta API de usuarios, filtra los activos, y guárdalos",
+        "workflow": {
+          "operations": [
+            {"id": "fetch", "operation": {"ApiCall": {"method": "GET", "url": "...", "outputPath": "/data"}}},
+            {"id": "filter", "operation": {"FilterData": {"inputPath": "/data", "conditions": [...], "outputPath": "/filtered"}}},
+            {"id": "store", "operation": {"StoreData": {"inputPath": "/filtered", "storage": "localStorage", "key": "result"}}}
+          ]
+        }
+      }
+    },
+    {
+      "id": "pattern-conditional-execution",
+      "title": "Patrón: Ejecución Condicional",
+      "description": "Ejecutar operaciones solo si se cumple una condición",
+      "pattern": {
+        "operations": ["Conditional", "ApiCall"],
+        "flow": "check condition -> execute if true",
+        "use_case": "Ejecutar operaciones basadas en condiciones"
+      }
+    },
+    {
+      "id": "pattern-retry-on-error",
+      "title": "Patrón: Reintento en Error",
+      "description": "Reintentar operación si falla",
+      "pattern": {
+        "operations": ["ApiCall", "Conditional", "Wait"],
+        "flow": "try -> check error -> wait -> retry",
+        "use_case": "Operaciones que pueden fallar temporalmente"
+      }
+    }
+  ]
+}
+

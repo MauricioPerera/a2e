@@ -1,0 +1,37 @@
+[project]
+name = "a2e-executor"
+version = "0.1.0"
+description = "A2E (Agent-to-Execution): Workflow executor inspired by A2UI philosophy, with RAG, API Knowledge Base, and Credentials Vault"
+requires-python = ">=3.10"
+dependencies = [
+    "aiohttp>=3.9.0",
+    "cryptography>=41.0.0",
+    "numpy>=1.24.0",
+    "sentence-transformers>=2.2.0",
+    "PyJWT>=2.8.0",
+    "flask>=2.0.0",
+    "flask-cors>=3.0.0",
+    "requests>=2.28.0",
+    # RAG Catalog con LokiJS y embeddings locales
+    # Nota: rag_catalog debe estar en el path o instalado como paquete
+    # Dependencias de sentence-transformers
+    "torch>=2.0.0",
+    "transformers>=4.30.0",
+    # HNSW index para búsqueda vectorial eficiente
+    "hnswlib>=0.7.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.0.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+asyncio_mode = "auto"
+
