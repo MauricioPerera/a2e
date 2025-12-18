@@ -156,3 +156,7 @@ npm run deploy
 
 Ver `example_usage.ts` para ejemplos completos de uso.
 
+## Inicio Rápido
+
+Para empezar rápidamente, consulta [QUICK_START.md](./QUICK_START.md) que te guiará paso a paso en menos de 5 minutos.
+
