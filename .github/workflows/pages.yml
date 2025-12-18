@@ -28,70 +28,25 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v4
 
-      - name: Setup Node.js (for markdown processing)
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Copy documentation
+      - name: Build site
         run: |
-          set -e  # Exit on error
           mkdir -p _site
           
-          # Copy index.html first (main page)
+          # Copy index.html
           if [ -f docs/index.html ]; then
             cp docs/index.html _site/index.html
-            echo "✓ Copied index.html"
-          else
-            echo "⚠ docs/index.html not found, creating simple redirect"
-            cat > _site/index.html << 'EOF'
-          <!DOCTYPE html>
-          <html>
-          <head>
-            <meta charset="UTF-8">
-            <meta http-equiv="refresh" content="0; url=README.html">
-            <title>A2E Protocol</title>
-          </head>
-          <body>
-            <p>Redirecting to <a href="README.html">README</a></p>
-          </body>
-          </html>
-          EOF
           fi
           
-          # Copy all markdown files
-          echo "Copying markdown files..."
-          shopt -s nullglob
-          for file in *.md; do
-            if [ -f "$file" ]; then
-              cp "$file" "_site/$file"
-              echo "✓ Copied $file"
-            fi
-          done
+          # Copy all markdown files from root
+          find . -maxdepth 1 -name "*.md" -type f -exec cp {} _site/ \;
           
-          # Copy LICENSE if exists
-          if [ -f LICENSE ]; then
-            cp LICENSE _site/
-            echo "✓ Copied LICENSE"
-          fi
+          # Copy LICENSE and .nojekyll
+          [ -f LICENSE ] && cp LICENSE _site/ || true
+          [ -f .nojekyll ] && cp .nojekyll _site/ || true
           
-          # Copy .nojekyll if exists
-          if [ -f .nojekyll ]; then
-            cp .nojekyll _site/
-            echo "✓ Copied .nojekyll"
-          fi
-          
-          # Verify we have files
-          file_count=$(find _site -type f | wc -l)
-          if [ "$file_count" -eq 0 ]; then
-            echo "❌ ERROR: No files to deploy!"
-            exit 1
-          fi
-          
-          # List what we're deploying
-          echo ""
-          echo "📦 Files to deploy ($file_count files):"
-          ls -la _site/ | head -20
+          # List files
+          echo "Files to deploy:"
+          ls -la _site/
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
