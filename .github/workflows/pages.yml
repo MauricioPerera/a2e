@@ -33,29 +33,17 @@ jobs:
           mkdir -p _site
           
           # Copy index.html
-          [ -f docs/index.html ] && cp docs/index.html _site/index.html || echo "docs/index.html not found"
-          
-          # Copy all markdown files from root
-          for f in *.md; do
-            [ -f "$f" ] && cp "$f" _site/ || true
-          done
-          
-          # Copy LICENSE and .nojekyll
-          [ -f LICENSE ] && cp LICENSE _site/ || true
-          [ -f .nojekyll ] && cp .nojekyll _site/ || true
-          
-          # Verify files exist
-          echo "Files in _site:"
-          ls -la _site/ || echo "No files found!"
-          
-          # Ensure at least index.html exists
-          if [ ! -f _site/index.html ]; then
-            echo "Creating default index.html"
-            cat > _site/index.html << 'EOF'
+          if [ -f docs/index.html ]; then
+            cp docs/index.html _site/index.html
+            echo "✓ Copied docs/index.html"
+          else
+            echo "⚠ docs/index.html not found, creating default"
+            cat > _site/index.html << 'HTML_EOF'
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>A2E Protocol</title>
   <meta http-equiv="refresh" content="0; url=README.html">
 </head>
@@ -63,7 +51,42 @@ jobs:
   <p>Redirecting to <a href="README.html">README</a></p>
 </body>
 </html>
-EOF
+HTML_EOF
+          fi
+          
+          # Copy all markdown files from root
+          echo "Copying markdown files..."
+          for f in *.md; do
+            if [ -f "$f" ]; then
+              cp "$f" _site/
+              echo "✓ Copied $f"
+            fi
+          done
+          
+          # Copy LICENSE and .nojekyll
+          if [ -f LICENSE ]; then
+            cp LICENSE _site/
+            echo "✓ Copied LICENSE"
+          fi
+          
+          if [ -f .nojekyll ]; then
+            cp .nojekyll _site/
+            echo "✓ Copied .nojekyll"
+          fi
+          
+          # Verify files exist
+          echo ""
+          echo "Files in _site:"
+          ls -la _site/
+          
+          # Count files
+          file_count=$(find _site -type f | wc -l)
+          echo ""
+          echo "Total files: $file_count"
+          
+          if [ "$file_count" -eq 0 ]; then
+            echo "ERROR: No files to deploy!"
+            exit 1
           fi
 
       - name: Upload artifact
