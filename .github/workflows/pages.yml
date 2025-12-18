@@ -35,31 +35,63 @@ jobs:
 
       - name: Copy documentation
         run: |
+          set -e  # Exit on error
           mkdir -p _site
           
           # Copy index.html first (main page)
           if [ -f docs/index.html ]; then
             cp docs/index.html _site/index.html
+            echo "✓ Copied index.html"
           else
-            # Create a simple index if docs/index.html doesn't exist
-            echo '<!DOCTYPE html><html><head><meta http-equiv="refresh" content="0; url=README.html"></head><body>Redirecting to <a href="README.html">README</a></body></html>' > _site/index.html
+            echo "⚠ docs/index.html not found, creating simple redirect"
+            cat > _site/index.html << 'EOF'
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="UTF-8">
+            <meta http-equiv="refresh" content="0; url=README.html">
+            <title>A2E Protocol</title>
+          </head>
+          <body>
+            <p>Redirecting to <a href="README.html">README</a></p>
+          </body>
+          </html>
+          EOF
           fi
           
           # Copy all markdown files
+          echo "Copying markdown files..."
+          shopt -s nullglob
           for file in *.md; do
             if [ -f "$file" ]; then
               cp "$file" "_site/$file"
+              echo "✓ Copied $file"
             fi
           done
           
           # Copy LICENSE if exists
           if [ -f LICENSE ]; then
             cp LICENSE _site/
+            echo "✓ Copied LICENSE"
+          fi
+          
+          # Copy .nojekyll if exists
+          if [ -f .nojekyll ]; then
+            cp .nojekyll _site/
+            echo "✓ Copied .nojekyll"
+          fi
+          
+          # Verify we have files
+          file_count=$(find _site -type f | wc -l)
+          if [ "$file_count" -eq 0 ]; then
+            echo "❌ ERROR: No files to deploy!"
+            exit 1
           fi
           
           # List what we're deploying
-          echo "Files to deploy:"
-          ls -la _site/
+          echo ""
+          echo "📦 Files to deploy ($file_count files):"
+          ls -la _site/ | head -20
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
