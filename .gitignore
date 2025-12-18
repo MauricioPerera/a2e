@@ -114,3 +114,8 @@ build/
 .wrangler/
 .dev.vars
 
+# Cloudflare secrets and sensitive config
+*.secrets.toml
+wrangler.secrets.toml
+*.local.toml
+
