@@ -1,0 +1,29 @@
+{
+  "name": "a2e-cloudflare-agent",
+  "version": "1.0.0",
+  "description": "Cloudflare Agent para conectarse al servidor A2E",
+  "type": "module",
+  "main": "a2e_agent.ts",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "keywords": [
+    "a2e",
+    "cloudflare",
+    "agents",
+    "workflow",
+    "ai"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "agents": "^1.0.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20231218.0",
+    "typescript": "^5.3.0",
+    "wrangler": "^3.0.0"
+  }
+}
+
