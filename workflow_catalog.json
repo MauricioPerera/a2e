@@ -299,6 +299,139 @@
         }
       },
       "required": ["inputPath", "operation", "outputPath"]
+    },
+    
+    "FormatText": {
+      "type": "object",
+      "description": "Formatea texto usando plantillas o transformaciones",
+      "properties": {
+        "inputPath": {
+          "type": "string",
+          "description": "Ruta al texto o datos en el data model"
+        },
+        "format": {
+          "type": "string",
+          "enum": ["template", "upper", "lower", "title", "capitalize", "trim", "replace"],
+          "description": "Tipo de formateo a aplicar"
+        },
+        "template": {
+          "type": "string",
+          "description": "Plantilla de formato (solo si format='template'). Usa {field} para variables"
+        },
+        "replacements": {
+          "type": "object",
+          "description": "Reemplazos para format='replace'. Clave: texto a buscar, Valor: texto de reemplazo"
+        },
+        "outputPath": {
+          "type": "string",
+          "description": "Ruta donde guardar el texto formateado"
+        }
+      },
+      "required": ["inputPath", "format", "outputPath"]
+    },
+    
+    "ExtractText": {
+      "type": "object",
+      "description": "Extrae información de texto usando expresiones regulares o patrones",
+      "properties": {
+        "inputPath": {
+          "type": "string",
+          "description": "Ruta al texto en el data model"
+        },
+        "pattern": {
+          "type": "string",
+          "description": "Expresión regular o patrón para extraer"
+        },
+        "extractAll": {
+          "type": "boolean",
+          "description": "Si extraer todas las coincidencias (true) o solo la primera (false)"
+        },
+        "outputPath": {
+          "type": "string",
+          "description": "Ruta donde guardar los resultados extraídos"
+        }
+      },
+      "required": ["inputPath", "pattern", "outputPath"]
+    },
+    
+    "ValidateData": {
+      "type": "object",
+      "description": "Valida datos usando reglas predefinidas (email, URL, número, etc.)",
+      "properties": {
+        "inputPath": {
+          "type": "string",
+          "description": "Ruta a los datos a validar en el data model"
+        },
+        "validationType": {
+          "type": "string",
+          "enum": ["email", "url", "number", "integer", "phone", "date", "custom"],
+          "description": "Tipo de validación a aplicar"
+        },
+        "pattern": {
+          "type": "string",
+          "description": "Expresión regular para validación custom (solo si validationType='custom')"
+        },
+        "outputPath": {
+          "type": "string",
+          "description": "Ruta donde guardar el resultado de validación (true/false o objeto con detalles)"
+        }
+      },
+      "required": ["inputPath", "validationType", "outputPath"]
+    },
+    
+    "Calculate": {
+      "type": "object",
+      "description": "Realiza cálculos matemáticos",
+      "properties": {
+        "inputPath": {
+          "type": "string",
+          "description": "Ruta a los números o expresión en el data model"
+        },
+        "operation": {
+          "type": "string",
+          "enum": ["add", "subtract", "multiply", "divide", "power", "modulo", "round", "ceil", "floor", "abs", "max", "min", "sum", "average"],
+          "description": "Operación matemática a realizar"
+        },
+        "operand": {
+          "type": ["number", "string"],
+          "description": "Segundo operando (para operaciones binarias) o path al segundo operando"
+        },
+        "precision": {
+          "type": "number",
+          "description": "Precisión decimal para redondeo (solo si operation='round')"
+        },
+        "outputPath": {
+          "type": "string",
+          "description": "Ruta donde guardar el resultado del cálculo"
+        }
+      },
+      "required": ["inputPath", "operation", "outputPath"]
+    },
+    
+    "EncodeDecode": {
+      "type": "object",
+      "description": "Codifica o decodifica datos (Base64, URL encoding, etc.)",
+      "properties": {
+        "inputPath": {
+          "type": "string",
+          "description": "Ruta a los datos en el data model"
+        },
+        "operation": {
+          "type": "string",
+          "enum": ["encode", "decode"],
+          "description": "Codificar o decodificar"
+        },
+        "encoding": {
+          "type": "string",
+          "enum": ["base64", "url", "html"],
+          "description": "Tipo de codificación a usar"
+        },
+        "outputPath": {
+          "type": "string",
+          "description": "Ruta donde guardar el resultado"
+        }
+      },
+      "required": ["inputPath", "operation", "encoding", "outputPath"]
     }
   }
 }

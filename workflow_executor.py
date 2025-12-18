@@ -147,6 +147,16 @@ class WorkflowExecutor:
             return self._execute_convert_timezone(config)
         elif operation_type == "DateCalculation":
             return self._execute_date_calculation(config)
+        elif operation_type == "FormatText":
+            return self._execute_format_text(config)
+        elif operation_type == "ExtractText":
+            return self._execute_extract_text(config)
+        elif operation_type == "ValidateData":
+            return self._execute_validate_data(config)
+        elif operation_type == "Calculate":
+            return self._execute_calculate(config)
+        elif operation_type == "EncodeDecode":
+            return self._execute_encode_decode(config)
         else:
             raise ValueError(f"Unknown operation type: {operation_type}")
     
@@ -552,6 +562,423 @@ class WorkflowExecutor:
             result = result_dt.strftime(format_string)
         else:  # iso8601 (default)
             result = result_dt.isoformat()
+        
+        # Guardar en data model
+        self._set_data(output_path, result)
+        
+        return result
+    
+    def _execute_format_text(self, config: Dict[str, Any]) -> str:
+        """
+        Formatea texto usando plantillas o transformaciones
+        """
+        import re
+        
+        input_path = config["inputPath"]
+        format_type = config["format"]
+        output_path = config["outputPath"]
+        
+        # Obtener texto de entrada
+        input_value = self._get_data(input_path)
+        
+        if input_value is None:
+            raise ValueError(f"No data found at path: {input_path}")
+        
+        # Convertir a string si no lo es
+        if not isinstance(input_value, str):
+            if isinstance(input_value, dict):
+                # Si es un objeto, usar template
+                if format_type == "template":
+                    template = config.get("template", str(input_value))
+                    result = template.format(**input_value)
+                else:
+                    result = str(input_value)
+            else:
+                result = str(input_value)
+        else:
+            result = input_value
+        
+        # Aplicar formato
+        if format_type == "upper":
+            result = result.upper()
+        elif format_type == "lower":
+            result = result.lower()
+        elif format_type == "title":
+            result = result.title()
+        elif format_type == "capitalize":
+            result = result.capitalize()
+        elif format_type == "trim":
+            result = result.strip()
+        elif format_type == "template":
+            template = config.get("template", result)
+            # Si input_value es dict, usar format
+            if isinstance(input_value, dict):
+                result = template.format(**input_value)
+            else:
+                # Reemplazar {value} con el valor
+                result = template.replace("{value}", str(input_value))
+        elif format_type == "replace":
+            replacements = config.get("replacements", {})
+            for old, new in replacements.items():
+                result = result.replace(old, new)
+        
+        # Guardar en data model
+        self._set_data(output_path, result)
+        
+        return result
+    
+    def _execute_extract_text(self, config: Dict[str, Any]) -> Any:
+        """
+        Extrae información de texto usando expresiones regulares
+        """
+        import re
+        
+        input_path = config["inputPath"]
+        pattern = config["pattern"]
+        extract_all = config.get("extractAll", False)
+        output_path = config["outputPath"]
+        
+        # Obtener texto
+        input_value = self._get_data(input_path)
+        
+        if input_value is None:
+            raise ValueError(f"No data found at path: {input_path}")
+        
+        text = str(input_value)
+        
+        # Compilar regex
+        try:
+            regex = re.compile(pattern)
+        except re.error as e:
+            raise ValueError(f"Invalid regex pattern: {pattern} - {e}")
+        
+        # Extraer
+        if extract_all:
+            matches = regex.findall(text)
+            result = matches if matches else []
+        else:
+            match = regex.search(text)
+            result = match.group(0) if match else None
+        
+        # Guardar en data model
+        self._set_data(output_path, result)
+        
+        return result
+    
+    def _execute_validate_data(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Valida datos usando reglas predefinidas
+        """
+        import re
+        from urllib.parse import urlparse
+        
+        input_path = config["inputPath"]
+        validation_type = config["validationType"]
+        pattern = config.get("pattern")
+        output_path = config["outputPath"]
+        
+        # Obtener datos
+        input_value = self._get_data(input_path)
+        
+        if input_value is None:
+            raise ValueError(f"No data found at path: {input_path}")
+        
+        value_str = str(input_value)
+        is_valid = False
+        error_message = None
+        
+        # Validar según tipo
+        if validation_type == "email":
+            email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+            is_valid = bool(re.match(email_pattern, value_str))
+            if not is_valid:
+                error_message = "Invalid email format"
+        
+        elif validation_type == "url":
+            try:
+                parsed = urlparse(value_str)
+                is_valid = all([parsed.scheme, parsed.netloc])
+                if not is_valid:
+                    error_message = "Invalid URL format"
+            except:
+                is_valid = False
+                error_message = "Invalid URL format"
+        
+        elif validation_type == "number":
+            try:
+                float(value_str)
+                is_valid = True
+            except ValueError:
+                is_valid = False
+                error_message = "Not a valid number"
+        
+        elif validation_type == "integer":
+            try:
+                int(value_str)
+                is_valid = True
+            except ValueError:
+                is_valid = False
+                error_message = "Not a valid integer"
+        
+        elif validation_type == "phone":
+            # Patrón básico para números de teléfono
+            phone_pattern = r'^[\d\s\-\+\(\)]+$'
+            is_valid = bool(re.match(phone_pattern, value_str)) and len(re.sub(r'[\s\-\+\(\)]', '', value_str)) >= 10
+            if not is_valid:
+                error_message = "Invalid phone number format"
+        
+        elif validation_type == "date":
+            try:
+                datetime.fromisoformat(value_str.replace('Z', '+00:00'))
+                is_valid = True
+            except:
+                try:
+                    datetime.strptime(value_str, "%Y-%m-%d")
+                    is_valid = True
+                except:
+                    is_valid = False
+                    error_message = "Invalid date format"
+        
+        elif validation_type == "custom":
+            if not pattern:
+                raise ValueError("pattern is required for custom validation")
+            try:
+                regex = re.compile(pattern)
+                is_valid = bool(regex.match(value_str))
+                if not is_valid:
+                    error_message = f"Value does not match pattern: {pattern}"
+            except re.error as e:
+                raise ValueError(f"Invalid regex pattern: {pattern} - {e}")
+        
+        # Crear resultado
+        result = {
+            "valid": is_valid,
+            "value": input_value
+        }
+        
+        if error_message:
+            result["error"] = error_message
+        
+        # Guardar en data model
+        self._set_data(output_path, result)
+        
+        return result
+    
+    def _execute_calculate(self, config: Dict[str, Any]) -> Any:
+        """
+        Realiza cálculos matemáticos
+        """
+        import math
+        
+        input_path = config["inputPath"]
+        operation = config["operation"]
+        operand = config.get("operand")
+        precision = config.get("precision", 2)
+        output_path = config["outputPath"]
+        
+        # Obtener valor de entrada
+        input_value = self._get_data(input_path)
+        
+        if input_value is None:
+            raise ValueError(f"No data found at path: {input_path}")
+        
+        # Resolver operando si es necesario
+        if operand is not None:
+            if isinstance(operand, str) and operand.startswith("/"):
+                # Es un path
+                operand = self._get_data(operand)
+            if isinstance(operand, str):
+                try:
+                    operand = float(operand)
+                except ValueError:
+                    raise ValueError(f"Cannot convert operand '{operand}' to number")
+        
+        # Operaciones que trabajan con listas
+        if operation in ["sum", "average"]:
+            if isinstance(input_value, list):
+                numbers = []
+                for x in input_value:
+                    if isinstance(x, (int, float)):
+                        numbers.append(float(x))
+                    elif isinstance(x, str):
+                        try:
+                            numbers.append(float(x))
+                        except ValueError:
+                            pass  # Ignorar valores no numéricos
+                
+                if operation == "sum":
+                    result = sum(numbers)
+                else:  # average
+                    result = sum(numbers) / len(numbers) if numbers else 0
+                
+                self._set_data(output_path, result)
+                return result
+            else:
+                # Si no es lista, tratar como número único
+                if isinstance(input_value, str):
+                    try:
+                        input_value = float(input_value)
+                    except ValueError:
+                        raise ValueError(f"Cannot convert '{input_value}' to number")
+                
+                if operation == "sum":
+                    result = float(input_value)
+                else:  # average
+                    result = float(input_value)
+                
+                self._set_data(output_path, result)
+                return result
+        
+        # Para otras operaciones, convertir a número
+        if isinstance(input_value, str):
+            try:
+                input_value = float(input_value)
+            except ValueError:
+                raise ValueError(f"Cannot convert '{input_value}' to number")
+        
+        if not isinstance(input_value, (int, float)):
+            raise ValueError(f"Input must be a number, got {type(input_value)}")
+        
+        # Realizar cálculo
+        if operation == "add":
+            if operand is None:
+                raise ValueError("operand is required for 'add' operation")
+            result = input_value + operand
+        
+        elif operation == "subtract":
+            if operand is None:
+                raise ValueError("operand is required for 'subtract' operation")
+            result = input_value - operand
+        
+        elif operation == "multiply":
+            if operand is None:
+                raise ValueError("operand is required for 'multiply' operation")
+            result = input_value * operand
+        
+        elif operation == "divide":
+            if operand is None:
+                raise ValueError("operand is required for 'divide' operation")
+            if operand == 0:
+                raise ValueError("Division by zero")
+            result = input_value / operand
+        
+        elif operation == "power":
+            if operand is None:
+                raise ValueError("operand is required for 'power' operation")
+            result = input_value ** operand
+        
+        elif operation == "modulo":
+            if operand is None:
+                raise ValueError("operand is required for 'modulo' operation")
+            result = input_value % operand
+        
+        elif operation == "round":
+            result = round(input_value, int(precision))
+        
+        elif operation == "ceil":
+            result = math.ceil(input_value)
+        
+        elif operation == "floor":
+            result = math.floor(input_value)
+        
+        elif operation == "abs":
+            result = abs(input_value)
+        
+        elif operation == "max":
+            if operand is None:
+                raise ValueError("operand is required for 'max' operation")
+            result = max(input_value, operand)
+        
+        elif operation == "min":
+            if operand is None:
+                raise ValueError("operand is required for 'min' operation")
+            result = min(input_value, operand)
+        
+        elif operation == "sum":
+            # Si input_value es una lista, sumar todos los elementos
+            if isinstance(input_value, list):
+                numbers = [float(x) for x in input_value if isinstance(x, (int, float, str))]
+                result = sum(numbers)
+            else:
+                result = input_value
+        
+        elif operation == "average":
+            # Si input_value es una lista, calcular promedio
+            if isinstance(input_value, list):
+                numbers = [float(x) for x in input_value if isinstance(x, (int, float, str))]
+                result = sum(numbers) / len(numbers) if numbers else 0
+            else:
+                result = input_value
+        
+        else:
+            raise ValueError(f"Unknown operation: {operation}")
+        
+        # Guardar en data model
+        self._set_data(output_path, result)
+        
+        return result
+    
+    def _execute_encode_decode(self, config: Dict[str, Any]) -> str:
+        """
+        Codifica o decodifica datos
+        """
+        import base64
+        from urllib.parse import quote, unquote, quote_plus, unquote_plus
+        import html
+        
+        input_path = config["inputPath"]
+        operation = config["operation"]
+        encoding = config["encoding"]
+        output_path = config["outputPath"]
+        
+        # Obtener datos
+        input_value = self._get_data(input_path)
+        
+        if input_value is None:
+            raise ValueError(f"No data found at path: {input_path}")
+        
+        # Convertir a bytes si es necesario
+        if isinstance(input_value, str):
+            input_bytes = input_value.encode('utf-8')
+        elif isinstance(input_value, bytes):
+            input_bytes = input_value
+        else:
+            input_bytes = str(input_value).encode('utf-8')
+        
+        # Realizar codificación/decodificación
+        if encoding == "base64":
+            if operation == "encode":
+                result = base64.b64encode(input_bytes).decode('utf-8')
+            else:  # decode
+                try:
+                    result = base64.b64decode(input_bytes).decode('utf-8')
+                except Exception as e:
+                    raise ValueError(f"Invalid base64 data: {e}")
+        
+        elif encoding == "url":
+            if isinstance(input_value, str):
+                input_str = input_value
+            else:
+                input_str = input_bytes.decode('utf-8')
+            
+            if operation == "encode":
+                result = quote(input_str)
+            else:  # decode
+                result = unquote(input_str)
+        
+        elif encoding == "html":
+            if isinstance(input_value, str):
+                input_str = input_value
+            else:
+                input_str = input_bytes.decode('utf-8')
+            
+            if operation == "encode":
+                result = html.escape(input_str)
+            else:  # decode
+                result = html.unescape(input_str)
+        
+        else:
+            raise ValueError(f"Unknown encoding: {encoding}")
         
         # Guardar en data model
         self._set_data(output_path, result)
