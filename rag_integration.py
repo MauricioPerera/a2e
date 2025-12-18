@@ -60,6 +60,9 @@ if LokiDatabase is None or VectorIndex is None:
     except ImportError:
         pass
 
+# Configurar logger primero
+logger = logging.getLogger(__name__)
+
 # Verificar que ambas clases están disponibles
 if LokiDatabase is None or VectorIndex is None:
     # No lanzar error inmediatamente, permitir uso sin RAG
@@ -71,8 +74,6 @@ if LokiDatabase is None or VectorIndex is None:
         f"To enable: install a2ui-rag-catalog or add rag_catalog to PYTHONPATH."
     )
     # Las clases se definirán como None, y el código verificará antes de usar
-
-logger = logging.getLogger(__name__)
 
 
 class A2ERAGSystem:
@@ -142,6 +143,10 @@ class A2ERAGSystem:
             "knowledge",
             unique_index="id"
         )
+        self.sql_queries_collection = self.db.add_collection(
+            "sql_queries",
+            unique_index="id"
+        )
         
         # Índices adicionales
         self.operations_collection.ensure_index("category")
@@ -149,6 +154,8 @@ class A2ERAGSystem:
         self.endpoints_collection.ensure_index("apiId")
         self.endpoints_collection.ensure_index("method")
         self.knowledge_collection.ensure_index("type")
+        self.sql_queries_collection.ensure_index("database")
+        self.sql_queries_collection.ensure_index("category")
         
         logger.info(f"A2E RAG System initialized with model: {embedding_model}")
     
@@ -316,6 +323,103 @@ class A2ERAGSystem:
         })
         
         logger.info(f"Indexed knowledge: {knowledge_id}")
+    
+    def index_sql_query(
+        self,
+        query_id: str,
+        sql_query: str,
+        description: str,
+        database: Optional[str] = None,
+        category: Optional[str] = None,
+        parameters: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None
+    ):
+        """
+        Indexa una consulta SQL en RAG
+        
+        Args:
+            query_id: ID único de la consulta
+            sql_query: La consulta SQL completa
+            description: Descripción de qué hace la consulta
+            database: Nombre de la base de datos (opcional)
+            category: Categoría de la consulta (ej: "select", "insert", "update", "analytics")
+            parameters: Lista de parámetros que acepta la consulta (opcional)
+            metadata: Metadatos adicionales (opcional)
+        """
+        # Texto para embedding: descripción + query + parámetros
+        text = f"SQL Query: {description}"
+        if database:
+            text += f" Database: {database}"
+        if category:
+            text += f" Category: {category}"
+        if parameters:
+            text += f" Parameters: {', '.join(parameters)}"
+        # Incluir partes clave de la query (sin incluir toda la query para evitar ruido)
+        # Extraer palabras clave de la query
+        query_keywords = self._extract_sql_keywords(sql_query)
+        if query_keywords:
+            text += f" Keywords: {', '.join(query_keywords)}"
+        
+        # Generar embedding
+        embedding = self.vector_index.model.encode(text)
+        vector_id = self.vector_index.add(text, {
+            "type": "sql_query",
+            "id": query_id,
+            "database": database,
+            "category": category,
+            "description": description
+        }, embedding)
+        
+        # Guardar en LokiJS
+        query_doc = {
+            "id": query_id,
+            "sql": sql_query,
+            "description": description,
+            "database": database or "default",
+            "category": category or "general",
+            "parameters": parameters or [],
+            "vector_id": vector_id
+        }
+        
+        if metadata:
+            query_doc["metadata"] = metadata
+        
+        self.sql_queries_collection.insert(query_doc)
+        
+        logger.info(f"Indexed SQL query: {query_id}")
+    
+    def _extract_sql_keywords(self, sql_query: str) -> List[str]:
+        """Extrae palabras clave de una consulta SQL"""
+        keywords = []
+        sql_lower = sql_query.lower()
+        
+        # Palabras clave SQL comunes
+        sql_keywords = [
+            "select", "from", "where", "join", "inner", "left", "right", "outer",
+            "group by", "order by", "having", "limit", "offset",
+            "insert", "update", "delete", "create", "alter", "drop",
+            "count", "sum", "avg", "max", "min", "distinct",
+            "union", "intersect", "except"
+        ]
+        
+        for keyword in sql_keywords:
+            if keyword in sql_lower:
+                keywords.append(keyword)
+        
+        # Extraer nombres de tablas (después de FROM, JOIN, etc.)
+        import re
+        table_patterns = [
+            r'from\s+(\w+)',
+            r'join\s+(\w+)',
+            r'into\s+(\w+)',
+            r'update\s+(\w+)'
+        ]
+        
+        for pattern in table_patterns:
+            matches = re.findall(pattern, sql_lower)
+            keywords.extend(matches)
+        
+        return list(set(keywords))  # Eliminar duplicados
     
     def search_operations(
         self,
@@ -500,6 +604,69 @@ class A2ERAGSystem:
                             break
         
         return knowledge
+    
+    def search_sql_queries(
+        self,
+        query: str,
+        database: Optional[str] = None,
+        category: Optional[str] = None,
+        top_k: int = 5
+    ) -> List[Dict[str, Any]]:
+        """
+        Busca consultas SQL relevantes usando búsqueda semántica
+        
+        Args:
+            query: Query de búsqueda (ej: "obtener usuarios activos")
+            database: Filtrar por base de datos (opcional)
+            category: Filtrar por categoría (opcional)
+            top_k: Número de resultados a retornar
+        
+        Returns:
+            Lista de consultas SQL relevantes
+        """
+        results = self.vector_index.search(query, top_k=top_k * 2)
+        
+        sql_queries = []
+        seen = set()
+        
+        for result in results:
+            # result es una tupla (metadata, score)
+            if isinstance(result, tuple):
+                metadata, score = result
+            else:
+                # Compatibilidad con formato dict (HNSW)
+                metadata = result.get("metadata", result)
+                score = result.get("score", 0.0)
+            
+            if metadata.get("type") == "sql_query":
+                query_id = metadata.get("id")
+                
+                if query_id and query_id not in seen:
+                    # Filtrar por base de datos si se especifica
+                    if database and metadata.get("database") != database:
+                        continue
+                    
+                    # Filtrar por categoría si se especifica
+                    if category and metadata.get("category") != category:
+                        continue
+                    
+                    query_doc = self.sql_queries_collection.find_one({"id": query_id})
+                    if query_doc:
+                        sql_queries.append({
+                            "id": query_id,
+                            "sql": query_doc.get("sql", ""),
+                            "description": query_doc.get("description", ""),
+                            "database": query_doc.get("database", ""),
+                            "category": query_doc.get("category", ""),
+                            "parameters": query_doc.get("parameters", []),
+                            "metadata": query_doc.get("metadata", {}),
+                            "score": float(score)
+                        })
+                        seen.add(query_id)
+                        if len(sql_queries) >= top_k:
+                            break
+        
+        return sql_queries
     
     def build_partial_schema(
         self,

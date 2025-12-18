@@ -18,7 +18,9 @@ from validation.workflow_validator import WorkflowValidator, ValidationLevel
 from monitoring.audit_logger import AuditLogger
 from responses.response_formatter import ResponseFormat
 from knowledge_base_manager import KnowledgeBaseManager
+from sql_query_manager import SQLQueryManager
 from rate_limiting import RateLimiter, RateLimitConfig, RateLimitMiddleware
+from server.dashboard_metrics import DashboardMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -32,13 +34,15 @@ auth: Optional[AgentAuth] = None
 audit_logger: Optional[AuditLogger] = None
 auth_middleware: Optional[AgentAuthMiddleware] = None
 kb_manager: Optional[KnowledgeBaseManager] = None
+sql_query_manager: Optional[SQLQueryManager] = None
 rate_limiter: Optional[RateLimiter] = None
 rate_limit_middleware: Optional[RateLimitMiddleware] = None
+dashboard_metrics: Optional[DashboardMetrics] = None
 
 
 def init_server(config: Dict[str, Any]):
     """Inicializa el servidor con configuración"""
-    global api_kb, vault, auth, audit_logger, auth_middleware, kb_manager, rate_limiter, rate_limit_middleware
+    global api_kb, vault, auth, audit_logger, auth_middleware, kb_manager, sql_query_manager, rate_limiter, rate_limit_middleware, dashboard_metrics
     
     # Cargar configuración
     vault_path = config.get("vault", {}).get("path", "credentials.vault.json")
@@ -61,6 +65,9 @@ def init_server(config: Dict[str, Any]):
         # Crear Knowledge Base Manager (comparte el mismo RAG)
         kb_manager = KnowledgeBaseManager(rag_system=rag_system, use_rag=True)
         
+        # Crear SQL Query Manager (comparte el mismo RAG)
+        sql_query_manager = SQLQueryManager(rag_system=rag_system, use_rag=True)
+        
         # Cargar bases de conocimiento si se especifican
         kb_dir = kb_config.get("directory")
         if kb_dir:
@@ -75,6 +82,15 @@ def init_server(config: Dict[str, Any]):
                         kb_path=str(kb_file),
                         kb_type=kb_type
                     )
+        
+        # Cargar consultas SQL si se especifican
+        sql_config = config.get("sqlQueries", {})
+        sql_file = sql_config.get("file")
+        if sql_file:
+            from pathlib import Path
+            sql_path = Path(sql_file)
+            if sql_path.exists():
+                sql_query_manager.load_sql_queries_from_file(str(sql_path))
     except ImportError:
         # RAG no disponible, usar sin RAG
         logger.warning("RAG not available, using keyword search only")
@@ -82,6 +98,7 @@ def init_server(config: Dict[str, Any]):
         if api_kb_path:
             api_kb.load_api_definitions(api_kb_path)
         kb_manager = KnowledgeBaseManager(use_rag=False)
+        sql_query_manager = SQLQueryManager(use_rag=False)
     
     auth = AgentAuth(config_path=auth_path)
     auth_middleware = AgentAuthMiddleware(auth)
@@ -124,6 +141,14 @@ def init_server(config: Dict[str, Any]):
         rate_limiter = None
         rate_limit_middleware = None
         logger.info("Rate limiting disabled")
+    
+    # Inicializar métricas del dashboard
+    dashboard_metrics = DashboardMetrics(
+        audit_logger=audit_logger,
+        api_kb=api_kb,
+        sql_query_manager=sql_query_manager,
+        rate_limiter=rate_limiter
+    )
     
     logger.info("A2E Server initialized")
 
@@ -184,6 +209,7 @@ def get_capabilities():
             "availableCredentials": filtered["availableCredentials"],
             "supportedOperations": filtered["supportedOperations"],
             "knowledgeBases": knowledge_bases_info,
+            "sqlQueriesAvailable": sql_query_manager is not None,
             "securityConstraints": {
                 "maxExecutionTime": 30000,
                 "maxOperations": 20
@@ -364,6 +390,194 @@ def list_knowledge_bases():
         "knowledgeBases": bases,
         "count": len(bases)
     })
+
+
+@app.route('/api/v1/sql-queries/search', methods=['POST'])
+def search_sql_queries():
+    """Busca consultas SQL relevantes"""
+    # Autenticar
+    agent_id = auth_middleware.authenticate_request(request.headers)
+    if not agent_id:
+        return jsonify({"error": "Authentication required"}), 401
+    
+    if not sql_query_manager:
+        return jsonify({"error": "SQL query manager not available"}), 503
+    
+    data = request.get_json()
+    query = data.get("query")
+    
+    if not query:
+        return jsonify({"error": "query field required"}), 400
+    
+    results = sql_query_manager.search_sql_queries(
+        query=query,
+        database=data.get("database"),
+        category=data.get("category"),
+        top_k=data.get("top_k", 5)
+    )
+    
+    return jsonify({
+        "query": query,
+        "results": results,
+        "count": len(results)
+    })
+
+
+@app.route('/api/v1/sql-queries', methods=['GET'])
+def list_sql_queries():
+    """Lista consultas SQL disponibles"""
+    # Autenticar
+    agent_id = auth_middleware.authenticate_request(request.headers)
+    if not agent_id:
+        return jsonify({"error": "Authentication required"}), 401
+    
+    if not sql_query_manager:
+        return jsonify({"sqlQueries": []})
+    
+    database = request.args.get("database")
+    category = request.args.get("category")
+    
+    queries = sql_query_manager.list_sql_queries(
+        database=database,
+        category=category
+    )
+    
+    return jsonify({
+        "sqlQueries": queries,
+        "count": len(queries)
+    })
+
+
+@app.route('/api/v1/sql-queries/<query_id>', methods=['GET'])
+def get_sql_query(query_id: str):
+    """Obtiene una consulta SQL específica"""
+    # Autenticar
+    agent_id = auth_middleware.authenticate_request(request.headers)
+    if not agent_id:
+        return jsonify({"error": "Authentication required"}), 401
+    
+    if not sql_query_manager:
+        return jsonify({"error": "SQL query manager not available"}), 503
+    
+    query = sql_query_manager.get_sql_query(query_id)
+    
+    if not query:
+        return jsonify({"error": "SQL query not found"}), 404
+    
+    return jsonify(query)
+
+
+@app.route('/dashboard', methods=['GET'])
+def dashboard():
+    """Sirve el dashboard HTML"""
+    from flask import send_from_directory
+    from pathlib import Path
+    dashboard_path = Path(__file__).parent.parent / 'dashboard'
+    return send_from_directory(str(dashboard_path), 'index.html')
+
+
+@app.route('/api/v1/dashboard/metrics', methods=['GET'])
+def get_dashboard_metrics():
+    """Obtiene todas las métricas del dashboard"""
+    if not dashboard_metrics:
+        return jsonify({"error": "Dashboard metrics not available"}), 503
+    
+    days = request.args.get("days", 7, type=int)
+    agent_id = request.args.get("agent_id")
+    workflow_id = request.args.get("workflow_id")
+    
+    metrics = dashboard_metrics.get_all_metrics(
+        days=days,
+        agent_id=agent_id,
+        workflow_id=workflow_id
+    )
+    return jsonify(metrics)
+
+
+@app.route('/api/v1/dashboard/overview', methods=['GET'])
+def get_dashboard_overview():
+    """Obtiene métricas generales"""
+    if not dashboard_metrics:
+        return jsonify({"error": "Dashboard metrics not available"}), 503
+    
+    days = request.args.get("days", 7, type=int)
+    overview = dashboard_metrics.get_overview_metrics(days=days)
+    return jsonify(overview)
+
+
+@app.route('/api/v1/dashboard/timeline', methods=['GET'])
+def get_dashboard_timeline():
+    """Obtiene timeline de ejecuciones"""
+    if not dashboard_metrics:
+        return jsonify({"error": "Dashboard metrics not available"}), 503
+    
+    days = request.args.get("days", 7, type=int)
+    agent_id = request.args.get("agent_id")
+    workflow_id = request.args.get("workflow_id")
+    
+    timeline = dashboard_metrics.get_executions_timeline(
+        days=days,
+        agent_id=agent_id,
+        workflow_id=workflow_id
+    )
+    return jsonify({"timeline": timeline})
+
+
+@app.route('/api/v1/dashboard/export', methods=['GET'])
+def export_dashboard_metrics():
+    """Exporta métricas en formato CSV o JSON"""
+    from flask import Response
+    from datetime import datetime
+    import csv
+    import io
+    import json
+    
+    if not dashboard_metrics:
+        return jsonify({"error": "Dashboard metrics not available"}), 503
+    
+    days = request.args.get("days", 7, type=int)
+    agent_id = request.args.get("agent_id")
+    workflow_id = request.args.get("workflow_id")
+    format_type = request.args.get("format", "json")  # json o csv
+    
+    metrics = dashboard_metrics.get_all_metrics(
+        days=days,
+        agent_id=agent_id,
+        workflow_id=workflow_id
+    )
+    
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    
+    if format_type == "csv":
+        output = io.StringIO()
+        writer = csv.writer(output)
+        
+        # Escribir overview
+        writer.writerow(["Métrica", "Valor"])
+        writer.writerow(["Total Ejecuciones", metrics["overview"]["total_executions"]])
+        writer.writerow(["Ejecuciones Exitosas", metrics["overview"]["successful_executions"]])
+        writer.writerow(["Ejecuciones Fallidas", metrics["overview"]["failed_executions"]])
+        writer.writerow(["Duración Promedio (ms)", metrics["overview"]["average_duration_ms"]])
+        writer.writerow([])
+        
+        # Escribir timeline
+        writer.writerow(["Fecha", "Total", "Exitosas", "Fallidas"])
+        for day in metrics["timeline"]:
+            writer.writerow([day["date"], day["total"], day["success"], day["failed"]])
+        
+        output.seek(0)
+        return Response(
+            output.getvalue(),
+            mimetype="text/csv",
+            headers={"Content-Disposition": f"attachment; filename=a2e_metrics_{timestamp}.csv"}
+        )
+    else:
+        # JSON
+        return Response(
+            json.dumps(metrics, indent=2),
+            mimetype="application/json",
+            headers={"Content-Disposition": f"attachment; filename=a2e_metrics_{timestamp}.json"}
+        )
 
 
 @app.errorhandler(404)

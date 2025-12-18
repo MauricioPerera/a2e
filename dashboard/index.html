@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>A2E Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #f5f7fa;
+            color: #333;
+            line-height: 1.6;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 2rem;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .header h1 {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .header p {
+            opacity: 0.9;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            transition: transform 0.2s;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-5px);
+        }
+
+        .stat-card h3 {
+            font-size: 0.9rem;
+            color: #666;
+            margin-bottom: 0.5rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .stat-card .value {
+            font-size: 2.5rem;
+            font-weight: bold;
+            color: #667eea;
+            margin-bottom: 0.5rem;
+        }
+
+        .stat-card .change {
+            font-size: 0.9rem;
+            color: #28a745;
+        }
+
+        .chart-container {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 2rem;
+        }
+
+        .chart-container h2 {
+            margin-bottom: 1rem;
+            color: #333;
+        }
+
+        .grid-2 {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+            gap: 2rem;
+        }
+
+        .table-container {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            overflow-x: auto;
+        }
+
+        .table-container h2 {
+            margin-bottom: 1rem;
+            color: #333;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            padding: 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+        }
+
+        th {
+            background: #f8f9fa;
+            font-weight: 600;
+            color: #666;
+        }
+
+        tr:hover {
+            background: #f8f9fa;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+
+        .badge-success {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .badge-danger {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .badge-warning {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .badge-info {
+            background: #d1ecf1;
+            color: #0c5460;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 2rem;
+            color: #666;
+        }
+
+        .refresh-btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 1rem;
+            margin-bottom: 1rem;
+            transition: background 0.2s;
+        }
+
+        .refresh-btn:hover {
+            background: #5568d3;
+        }
+
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 1rem;
+            border-radius: 5px;
+            margin-bottom: 1rem;
+        }
+
+        .filters-container {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+
+        .filters {
+            display: flex;
+            gap: 1.5rem;
+            flex-wrap: wrap;
+        }
+
+        .filters label {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .filters label span {
+            font-size: 0.9rem;
+            color: #666;
+            font-weight: 600;
+        }
+
+        .filters select {
+            padding: 0.5rem 1rem;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 1rem;
+            background: white;
+            cursor: pointer;
+        }
+
+        .filters select:hover {
+            border-color: #667eea;
+        }
+
+        .actions {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+
+        .export-btn {
+            background: #28a745;
+            color: white;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: background 0.2s;
+        }
+
+        .export-btn:hover {
+            background: #218838;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>📊 A2E Dashboard</h1>
+        <p>Métricas y estadísticas del sistema A2E</p>
+    </div>
+
+    <div class="container">
+        <!-- Filtros y controles -->
+        <div class="filters-container">
+            <div class="filters">
+                <label>
+                    <span>Período:</span>
+                    <select id="days-filter" onchange="loadDashboard()">
+                        <option value="1">Último día</option>
+                        <option value="7" selected>Últimos 7 días</option>
+                        <option value="30">Últimos 30 días</option>
+                        <option value="90">Últimos 90 días</option>
+                    </select>
+                </label>
+                <label>
+                    <span>Agente:</span>
+                    <select id="agent-filter" onchange="loadDashboard()">
+                        <option value="">Todos</option>
+                    </select>
+                </label>
+                <label>
+                    <span>Workflow:</span>
+                    <select id="workflow-filter" onchange="loadDashboard()">
+                        <option value="">Todos</option>
+                    </select>
+                </label>
+            </div>
+            <div class="actions">
+                <button class="refresh-btn" onclick="loadDashboard()">🔄 Actualizar</button>
+                <button class="export-btn" onclick="exportMetrics('json')">📥 Exportar JSON</button>
+                <button class="export-btn" onclick="exportMetrics('csv')">📥 Exportar CSV</button>
+            </div>
+        </div>
+        
+        <div id="error-container"></div>
+        <div id="loading" class="loading">Cargando métricas...</div>
+        
+        <div id="dashboard-content" style="display: none;">
+            <!-- Estadísticas generales -->
+            <div class="stats-grid" id="stats-grid"></div>
+
+            <!-- Gráficos -->
+            <div class="grid-2">
+                <div class="chart-container">
+                    <h2>📈 Ejecuciones por Día</h2>
+                    <canvas id="timeline-chart"></canvas>
+                </div>
+                
+                <div class="chart-container">
+                    <h2>⚙️ Operaciones Más Usadas</h2>
+                    <canvas id="operations-chart"></canvas>
+                </div>
+            </div>
+
+            <div class="grid-2">
+                <div class="chart-container">
+                    <h2>⏱️ Distribución de Duraciones</h2>
+                    <canvas id="duration-chart"></canvas>
+                </div>
+                
+                <div class="chart-container">
+                    <h2>📊 Tasa de Éxito por Agente</h2>
+                    <canvas id="success-rate-chart"></canvas>
+                </div>
+            </div>
+
+            <!-- Tablas -->
+            <div class="grid-2">
+                <div class="table-container">
+                    <h2>🕐 Ejecuciones Recientes</h2>
+                    <table id="recent-executions">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Agente</th>
+                                <th>Workflow</th>
+                                <th>Estado</th>
+                                <th>Duración</th>
+                                <th>Fecha</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+
+                <div class="table-container">
+                    <h2>👥 Agentes Más Activos</h2>
+                    <table id="top-agents">
+                        <thead>
+                            <tr>
+                                <th>Agente</th>
+                                <th>Ejecuciones</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- APIs y SQL Queries -->
+            <div class="grid-2">
+                <div class="chart-container">
+                    <h2>🔌 APIs Disponibles</h2>
+                    <div id="apis-info"></div>
+                </div>
+
+                <div class="chart-container">
+                    <h2>💾 Consultas SQL</h2>
+                    <div id="sql-queries-info"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let timelineChart = null;
+        let operationsChart = null;
+        let durationChart = null;
+        let successRateChart = null;
+
+        function getFilters() {
+            return {
+                days: document.getElementById('days-filter').value,
+                agent_id: document.getElementById('agent-filter').value || null,
+                workflow_id: document.getElementById('workflow-filter').value || null
+            };
+        }
+
+        function buildQueryString(filters) {
+            const params = new URLSearchParams();
+            if (filters.days) params.append('days', filters.days);
+            if (filters.agent_id) params.append('agent_id', filters.agent_id);
+            if (filters.workflow_id) params.append('workflow_id', filters.workflow_id);
+            return params.toString();
+        }
+
+        async function loadDashboard() {
+            const loading = document.getElementById('loading');
+            const content = document.getElementById('dashboard-content');
+            const errorContainer = document.getElementById('error-container');
+            
+            loading.style.display = 'block';
+            content.style.display = 'none';
+            errorContainer.innerHTML = '';
+
+            try {
+                const filters = getFilters();
+                const queryString = buildQueryString(filters);
+                const response = await fetch(`/api/v1/dashboard/metrics?${queryString}`);
+                if (!response.ok) {
+                    throw new Error(`Error ${response.status}: ${response.statusText}`);
+                }
+                
+                const data = await response.json();
+                
+                // Actualizar filtros con listas disponibles
+                updateFilterOptions(data.agents, data.workflows);
+                
+                // Renderizar métricas
+                renderOverview(data.overview);
+                renderTimeline(data.timeline);
+                renderOperations(data.operations);
+                renderDurationDistribution(data.duration_distribution);
+                renderSuccessRateByAgent(data.success_rate_by_agent);
+                renderRecentExecutions(data.recent_executions);
+                renderTopAgents(data.overview.top_agents);
+                renderAPIs(data.apis);
+                renderSQLQueries(data.sql_queries);
+                
+                loading.style.display = 'none';
+                content.style.display = 'block';
+            } catch (error) {
+                loading.style.display = 'none';
+                errorContainer.innerHTML = `<div class="error">Error al cargar métricas: ${error.message}</div>`;
+            }
+        }
+
+        function renderOverview(overview) {
+            const grid = document.getElementById('stats-grid');
+            grid.innerHTML = `
+                <div class="stat-card">
+                    <h3>Total Ejecuciones</h3>
+                    <div class="value">${overview.total_executions}</div>
+                    <div class="change">Últimos ${overview.period_days} días</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Ejecuciones Exitosas</h3>
+                    <div class="value" style="color: #28a745;">${overview.successful_executions}</div>
+                    <div class="change">${overview.total_executions > 0 ? Math.round((overview.successful_executions / overview.total_executions) * 100) : 0}% éxito</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Ejecuciones Fallidas</h3>
+                    <div class="value" style="color: #dc3545;">${overview.failed_executions}</div>
+                    <div class="change">${overview.total_executions > 0 ? Math.round((overview.failed_executions / overview.total_executions) * 100) : 0}% fallos</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Duración Promedio</h3>
+                    <div class="value">${Math.round(overview.average_duration_ms)}ms</div>
+                    <div class="change">Por ejecución</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Agentes Activos</h3>
+                    <div class="value">${overview.total_agents}</div>
+                    <div class="change">Últimos ${overview.period_days} días</div>
+                </div>
+            `;
+        }
+
+        function renderTimeline(timeline) {
+            const ctx = document.getElementById('timeline-chart').getContext('2d');
+            
+            if (timelineChart) {
+                timelineChart.destroy();
+            }
+
+            const labels = timeline.map(t => new Date(t.date).toLocaleDateString('es-ES', { month: 'short', day: 'numeric' }));
+            const successData = timeline.map(t => t.success);
+            const failedData = timeline.map(t => t.failed);
+            const totalData = timeline.map(t => t.total);
+
+            timelineChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: 'Exitosas',
+                            data: successData,
+                            borderColor: '#28a745',
+                            backgroundColor: 'rgba(40, 167, 69, 0.1)',
+                            tension: 0.4
+                        },
+                        {
+                            label: 'Fallidas',
+                            data: failedData,
+                            borderColor: '#dc3545',
+                            backgroundColor: 'rgba(220, 53, 69, 0.1)',
+                            tension: 0.4
+                        },
+                        {
+                            label: 'Total',
+                            data: totalData,
+                            borderColor: '#667eea',
+                            backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                            tension: 0.4
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true
+                        }
+                    }
+                }
+            });
+        }
+
+        function renderOperations(operations) {
+            const ctx = document.getElementById('operations-chart').getContext('2d');
+            
+            if (operationsChart) {
+                operationsChart.destroy();
+            }
+
+            const labels = operations.map(op => op.operation_type);
+            const data = operations.map(op => op.count);
+
+            operationsChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: data,
+                        backgroundColor: [
+                            '#667eea',
+                            '#764ba2',
+                            '#f093fb',
+                            '#4facfe',
+                            '#00f2fe',
+                            '#43e97b',
+                            '#fa709a'
+                        ]
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    plugins: {
+                        legend: {
+                            position: 'right',
+                        }
+                    }
+                }
+            });
+        }
+
+        function renderRecentExecutions(executions) {
+            const tbody = document.querySelector('#recent-executions tbody');
+            tbody.innerHTML = executions.map(exec => `
+                <tr>
+                    <td><code>${exec.execution_id.substring(0, 8)}...</code></td>
+                    <td>${exec.agent_id || 'N/A'}</td>
+                    <td>${exec.workflow_id || 'N/A'}</td>
+                    <td><span class="badge badge-${getStatusClass(exec.status)}">${exec.status}</span></td>
+                    <td>${exec.duration_ms ? Math.round(exec.duration_ms) + 'ms' : 'N/A'}</td>
+                    <td>${new Date(exec.timestamp).toLocaleString('es-ES')}</td>
+                </tr>
+            `).join('');
+        }
+
+        function renderTopAgents(agents) {
+            const tbody = document.querySelector('#top-agents tbody');
+            tbody.innerHTML = agents.map(agent => `
+                <tr>
+                    <td>${agent.agent_id}</td>
+                    <td><strong>${agent.count}</strong></td>
+                </tr>
+            `).join('');
+        }
+
+        function renderAPIs(apis) {
+            const container = document.getElementById('apis-info');
+            container.innerHTML = `
+                <div style="font-size: 2rem; color: #667eea; margin-bottom: 1rem;">${apis.total_apis}</div>
+                <div style="color: #666; margin-bottom: 1rem;">APIs registradas</div>
+                <div style="color: #666; margin-bottom: 0.5rem;">Total endpoints: <strong>${apis.total_endpoints}</strong></div>
+                ${apis.apis.length > 0 ? `
+                    <div style="margin-top: 1rem;">
+                        <strong>APIs:</strong>
+                        <ul style="margin-top: 0.5rem; padding-left: 1.5rem;">
+                            ${apis.apis.map(api => `<li>${api.id} (${api.endpoints_count} endpoints)</li>`).join('')}
+                        </ul>
+                    </div>
+                ` : ''}
+            `;
+        }
+
+        function renderSQLQueries(queries) {
+            const container = document.getElementById('sql-queries-info');
+            container.innerHTML = `
+                <div style="font-size: 2rem; color: #667eea; margin-bottom: 1rem;">${queries.total_queries}</div>
+                <div style="color: #666; margin-bottom: 1rem;">Consultas SQL registradas</div>
+                ${Object.keys(queries.queries_by_category).length > 0 ? `
+                    <div style="margin-top: 1rem;">
+                        <strong>Por categoría:</strong>
+                        <ul style="margin-top: 0.5rem; padding-left: 1.5rem;">
+                            ${Object.entries(queries.queries_by_category).map(([cat, count]) => `<li>${cat}: ${count}</li>`).join('')}
+                        </ul>
+                    </div>
+                ` : ''}
+            `;
+        }
+
+        function updateFilterOptions(agents, workflows) {
+            const agentFilter = document.getElementById('agent-filter');
+            const workflowFilter = document.getElementById('workflow-filter');
+            
+            // Guardar selección actual
+            const currentAgent = agentFilter.value;
+            const currentWorkflow = workflowFilter.value;
+            
+            // Actualizar opciones de agentes
+            agentFilter.innerHTML = '<option value="">Todos</option>';
+            agents.forEach(agent => {
+                const option = document.createElement('option');
+                option.value = agent;
+                option.textContent = agent;
+                if (agent === currentAgent) option.selected = true;
+                agentFilter.appendChild(option);
+            });
+            
+            // Actualizar opciones de workflows
+            workflowFilter.innerHTML = '<option value="">Todos</option>';
+            workflows.forEach(workflow => {
+                const option = document.createElement('option');
+                option.value = workflow;
+                option.textContent = workflow;
+                if (workflow === currentWorkflow) option.selected = true;
+                workflowFilter.appendChild(option);
+            });
+        }
+
+        function renderDurationDistribution(distribution) {
+            const ctx = document.getElementById('duration-chart').getContext('2d');
+            
+            if (durationChart) {
+                durationChart.destroy();
+            }
+
+            if (!distribution.buckets || distribution.buckets.length === 0) {
+                ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+                return;
+            }
+
+            const labels = distribution.buckets.map(b => b.range);
+            const data = distribution.buckets.map(b => b.count);
+
+            durationChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Ejecuciones',
+                        data: data,
+                        backgroundColor: '#667eea',
+                        borderColor: '#5568d3',
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true
+                        }
+                    }
+                }
+            });
+        }
+
+        function renderSuccessRateByAgent(successRates) {
+            const ctx = document.getElementById('success-rate-chart').getContext('2d');
+            
+            if (successRateChart) {
+                successRateChart.destroy();
+            }
+
+            if (!successRates || successRates.length === 0) {
+                ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+                return;
+            }
+
+            // Mostrar top 10
+            const topAgents = successRates.slice(0, 10);
+            const labels = topAgents.map(a => a.agent_id.substring(0, 15) + (a.agent_id.length > 15 ? '...' : ''));
+            const successData = topAgents.map(a => a.success_rate);
+            const failedData = topAgents.map(a => 100 - a.success_rate);
+
+            successRateChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: 'Éxito %',
+                            data: successData,
+                            backgroundColor: '#28a745',
+                            borderColor: '#218838',
+                            borderWidth: 1
+                        },
+                        {
+                            label: 'Fallo %',
+                            data: failedData,
+                            backgroundColor: '#dc3545',
+                            borderColor: '#c82333',
+                            borderWidth: 1
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                        }
+                    },
+                    scales: {
+                        x: {
+                            stacked: true
+                        },
+                        y: {
+                            stacked: true,
+                            max: 100
+                        }
+                    }
+                }
+            });
+        }
+
+        function exportMetrics(format) {
+            const filters = getFilters();
+            const queryString = buildQueryString(filters);
+            window.location.href = `/api/v1/dashboard/export?${queryString}&format=${format}`;
+        }
+
+        function getStatusClass(status) {
+            switch(status) {
+                case 'success': return 'success';
+                case 'failed': return 'danger';
+                case 'pending': return 'warning';
+                case 'running': return 'info';
+                default: return 'info';
+            }
+        }
+
+        // Cargar dashboard al iniciar
+        loadDashboard();
+        
+        // Auto-refresh cada 30 segundos
+        setInterval(loadDashboard, 30000);
+    </script>
+</body>
+</html>
+

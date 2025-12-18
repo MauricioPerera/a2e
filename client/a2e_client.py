@@ -190,6 +190,86 @@ class A2EClient:
         response.raise_for_status()
         data = response.json()
         return data.get("knowledgeBases", [])
+    
+    def search_sql_queries(
+        self,
+        query: str,
+        database: Optional[str] = None,
+        category: Optional[str] = None,
+        top_k: int = 5
+    ) -> List[Dict[str, Any]]:
+        """
+        Busca consultas SQL relevantes
+        
+        Args:
+            query: Query de búsqueda (ej: "obtener usuarios activos")
+            database: Filtrar por base de datos (opcional)
+            category: Filtrar por categoría (opcional)
+            top_k: Número de resultados
+        
+        Returns:
+            Lista de consultas SQL relevantes
+        """
+        response = requests.post(
+            f"{self.base_url}/api/v1/sql-queries/search",
+            headers=self._get_headers(),
+            json={
+                "query": query,
+                "database": database,
+                "category": category,
+                "top_k": top_k
+            }
+        )
+        response.raise_for_status()
+        data = response.json()
+        return data.get("results", [])
+    
+    def list_sql_queries(
+        self,
+        database: Optional[str] = None,
+        category: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Lista consultas SQL disponibles
+        
+        Args:
+            database: Filtrar por base de datos (opcional)
+            category: Filtrar por categoría (opcional)
+        
+        Returns:
+            Lista de consultas SQL
+        """
+        params = {}
+        if database:
+            params["database"] = database
+        if category:
+            params["category"] = category
+        
+        response = requests.get(
+            f"{self.base_url}/api/v1/sql-queries",
+            headers=self._get_headers(),
+            params=params
+        )
+        response.raise_for_status()
+        data = response.json()
+        return data.get("sqlQueries", [])
+    
+    def get_sql_query(self, query_id: str) -> Dict[str, Any]:
+        """
+        Obtiene una consulta SQL específica
+        
+        Args:
+            query_id: ID de la consulta
+        
+        Returns:
+            Consulta SQL completa
+        """
+        response = requests.get(
+            f"{self.base_url}/api/v1/sql-queries/{query_id}",
+            headers=self._get_headers()
+        )
+        response.raise_for_status()
+        return response.json()
 
 
 class WorkflowBuilder:

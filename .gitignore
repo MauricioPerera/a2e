@@ -81,6 +81,10 @@ Thumbs.db
 tmp/
 temp/
 
+# Exported files
+exported_*.json
+example_sql_queries.json
+
 # Model files (large)
 *.bin
 *.safetensors
