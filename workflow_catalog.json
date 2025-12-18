@@ -183,6 +183,122 @@
         "outputPath": {"type": "string"}
       },
       "required": ["sources", "strategy", "outputPath"]
+    },
+    
+    "GetCurrentDateTime": {
+      "type": "object",
+      "description": "Obtiene la fecha y hora actual en formato ISO 8601",
+      "properties": {
+        "timezone": {
+          "type": "string",
+          "description": "Zona horaria (ej: 'UTC', 'America/New_York', 'Europe/Madrid'). Si no se especifica, usa la zona horaria del sistema"
+        },
+        "format": {
+          "type": "string",
+          "enum": ["iso8601", "timestamp", "custom"],
+          "description": "Formato de salida. 'iso8601' (default): formato ISO 8601, 'timestamp': Unix timestamp en segundos, 'custom': usar formatString"
+        },
+        "formatString": {
+          "type": "string",
+          "description": "Formato personalizado (solo si format='custom'). Usa formato strftime de Python"
+        },
+        "outputPath": {
+          "type": "string",
+          "description": "Ruta en el data model donde guardar la fecha/hora"
+        }
+      },
+      "required": ["outputPath"]
+    },
+    
+    "ConvertTimezone": {
+      "type": "object",
+      "description": "Convierte una fecha/hora de una zona horaria a otra",
+      "properties": {
+        "inputPath": {
+          "type": "string",
+          "description": "Ruta a la fecha/hora en el data model. Puede ser ISO 8601 string, Unix timestamp, o objeto con campos date/time"
+        },
+        "fromTimezone": {
+          "type": "string",
+          "description": "Zona horaria de origen (ej: 'UTC', 'America/New_York'). Si no se especifica, se intenta detectar o usar UTC"
+        },
+        "toTimezone": {
+          "type": "string",
+          "description": "Zona horaria de destino (ej: 'Europe/Madrid', 'America/Los_Angeles')"
+        },
+        "format": {
+          "type": "string",
+          "enum": ["iso8601", "timestamp", "custom"],
+          "description": "Formato de salida. 'iso8601' (default): formato ISO 8601, 'timestamp': Unix timestamp, 'custom': usar formatString"
+        },
+        "formatString": {
+          "type": "string",
+          "description": "Formato personalizado (solo si format='custom'). Usa formato strftime de Python"
+        },
+        "outputPath": {
+          "type": "string",
+          "description": "Ruta en el data model donde guardar la fecha/hora convertida"
+        }
+      },
+      "required": ["inputPath", "toTimezone", "outputPath"]
+    },
+    
+    "DateCalculation": {
+      "type": "object",
+      "description": "Realiza cálculos con fechas (sumar días, restar horas, etc.)",
+      "properties": {
+        "inputPath": {
+          "type": "string",
+          "description": "Ruta a la fecha base en el data model. Puede ser ISO 8601 string, Unix timestamp, o objeto con campos date/time"
+        },
+        "operation": {
+          "type": "string",
+          "enum": ["add", "subtract"],
+          "description": "Operación a realizar: 'add' para sumar, 'subtract' para restar"
+        },
+        "years": {
+          "type": "number",
+          "description": "Años a sumar/restar (opcional)"
+        },
+        "months": {
+          "type": "number",
+          "description": "Meses a sumar/restar (opcional)"
+        },
+        "days": {
+          "type": "number",
+          "description": "Días a sumar/restar (opcional)"
+        },
+        "hours": {
+          "type": "number",
+          "description": "Horas a sumar/restar (opcional)"
+        },
+        "minutes": {
+          "type": "number",
+          "description": "Minutos a sumar/restar (opcional)"
+        },
+        "seconds": {
+          "type": "number",
+          "description": "Segundos a sumar/restar (opcional)"
+        },
+        "timezone": {
+          "type": "string",
+          "description": "Zona horaria para la fecha base si no está especificada (opcional)"
+        },
+        "format": {
+          "type": "string",
+          "enum": ["iso8601", "timestamp", "custom"],
+          "description": "Formato de salida. 'iso8601' (default): formato ISO 8601, 'timestamp': Unix timestamp, 'custom': usar formatString"
+        },
+        "formatString": {
+          "type": "string",
+          "description": "Formato personalizado (solo si format='custom'). Usa formato strftime de Python"
+        },
+        "outputPath": {
+          "type": "string",
+          "description": "Ruta en el data model donde guardar el resultado del cálculo"
+        }
+      },
+      "required": ["inputPath", "operation", "outputPath"]
     }
   }
 }

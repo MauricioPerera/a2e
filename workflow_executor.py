@@ -10,6 +10,14 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# Intentar importar pytz, pero no fallar si no está disponible
+try:
+    import pytz
+    PYTZ_AVAILABLE = True
+except ImportError:
+    PYTZ_AVAILABLE = False
+    logger.warning("pytz not available. Timezone operations will be limited.")
+
 
 class WorkflowExecutor:
     """
@@ -133,6 +141,12 @@ class WorkflowExecutor:
             return await self._execute_store_data(config)
         elif operation_type == "Wait":
             return await self._execute_wait(config)
+        elif operation_type == "GetCurrentDateTime":
+            return self._execute_get_current_datetime(config)
+        elif operation_type == "ConvertTimezone":
+            return self._execute_convert_timezone(config)
+        elif operation_type == "DateCalculation":
+            return self._execute_date_calculation(config)
         else:
             raise ValueError(f"Unknown operation type: {operation_type}")
     
@@ -331,6 +345,218 @@ class WorkflowExecutor:
             current = current[part]
         
         current[parts[-1]] = value
+    
+    def _execute_get_current_datetime(self, config: Dict[str, Any]) -> str:
+        """
+        Obtiene la fecha y hora actual
+        """
+        from datetime import datetime
+        import pytz
+        
+        timezone_str = config.get("timezone")
+        format_type = config.get("format", "iso8601")
+        format_string = config.get("formatString")
+        output_path = config["outputPath"]
+        
+        # Obtener fecha/hora actual
+        if timezone_str:
+            try:
+                tz = pytz.timezone(timezone_str)
+                now = datetime.now(tz)
+            except pytz.exceptions.UnknownTimeZoneError:
+                logger.warning(f"Unknown timezone: {timezone_str}, using system timezone")
+                now = datetime.now()
+        else:
+            now = datetime.now()
+        
+        # Formatear según el tipo solicitado
+        if format_type == "timestamp":
+            result = now.timestamp()
+        elif format_type == "custom" and format_string:
+            result = now.strftime(format_string)
+        else:  # iso8601 (default)
+            result = now.isoformat()
+        
+        # Guardar en data model
+        self._set_data(output_path, result)
+        
+        return result
+    
+    def _execute_convert_timezone(self, config: Dict[str, Any]) -> str:
+        """
+        Convierte una fecha/hora de una zona horaria a otra
+        """
+        from datetime import datetime
+        import pytz
+        
+        input_path = config["inputPath"]
+        from_timezone_str = config.get("fromTimezone")
+        to_timezone_str = config["toTimezone"]
+        format_type = config.get("format", "iso8601")
+        format_string = config.get("formatString")
+        output_path = config["outputPath"]
+        
+        # Obtener fecha/hora de entrada
+        input_value = self._get_data(input_path)
+        
+        if input_value is None:
+            raise ValueError(f"No data found at path: {input_path}")
+        
+        # Parsear fecha/hora
+        dt = None
+        
+        if isinstance(input_value, (int, float)):
+            # Unix timestamp
+            dt = datetime.fromtimestamp(input_value, tz=pytz.UTC)
+        elif isinstance(input_value, str):
+            # Intentar parsear ISO 8601
+            try:
+                dt = datetime.fromisoformat(input_value.replace('Z', '+00:00'))
+            except ValueError:
+                # Intentar otros formatos comunes
+                try:
+                    dt = datetime.strptime(input_value, "%Y-%m-%d %H:%M:%S")
+                except ValueError:
+                    raise ValueError(f"Unable to parse date string: {input_value}")
+        elif isinstance(input_value, dict):
+            # Objeto con campos date/time
+            year = input_value.get("year", datetime.now().year)
+            month = input_value.get("month", datetime.now().month)
+            day = input_value.get("day", datetime.now().day)
+            hour = input_value.get("hour", 0)
+            minute = input_value.get("minute", 0)
+            second = input_value.get("second", 0)
+            dt = datetime(year, month, day, hour, minute, second)
+        else:
+            raise ValueError(f"Unsupported date format: {type(input_value)}")
+        
+        # Si no tiene timezone y se especificó fromTimezone, aplicarla
+        if dt.tzinfo is None and from_timezone_str:
+            try:
+                from_tz = pytz.timezone(from_timezone_str)
+                dt = from_tz.localize(dt)
+            except pytz.exceptions.UnknownTimeZoneError:
+                logger.warning(f"Unknown from_timezone: {from_timezone_str}, assuming UTC")
+                dt = pytz.UTC.localize(dt)
+        elif dt.tzinfo is None:
+            # Si no tiene timezone, asumir UTC
+            dt = pytz.UTC.localize(dt)
+        
+        # Convertir a zona horaria destino
+        try:
+            to_tz = pytz.timezone(to_timezone_str)
+            converted_dt = dt.astimezone(to_tz)
+        except pytz.exceptions.UnknownTimeZoneError:
+            raise ValueError(f"Unknown timezone: {to_timezone_str}")
+        
+        # Formatear según el tipo solicitado
+        if format_type == "timestamp":
+            result = converted_dt.timestamp()
+        elif format_type == "custom" and format_string:
+            result = converted_dt.strftime(format_string)
+        else:  # iso8601 (default)
+            result = converted_dt.isoformat()
+        
+        # Guardar en data model
+        self._set_data(output_path, result)
+        
+        return result
+    
+    def _execute_date_calculation(self, config: Dict[str, Any]) -> str:
+        """
+        Realiza cálculos con fechas (sumar días, restar horas, etc.)
+        """
+        from datetime import datetime, timedelta
+        import pytz
+        
+        input_path = config["inputPath"]
+        operation = config["operation"]
+        timezone_str = config.get("timezone")
+        format_type = config.get("format", "iso8601")
+        format_string = config.get("formatString")
+        output_path = config["outputPath"]
+        
+        # Obtener fecha base
+        input_value = self._get_data(input_path)
+        
+        if input_value is None:
+            raise ValueError(f"No data found at path: {input_path}")
+        
+        # Parsear fecha/hora
+        dt = None
+        
+        if isinstance(input_value, (int, float)):
+            # Unix timestamp
+            dt = datetime.fromtimestamp(input_value, tz=pytz.UTC)
+        elif isinstance(input_value, str):
+            # Intentar parsear ISO 8601
+            try:
+                dt = datetime.fromisoformat(input_value.replace('Z', '+00:00'))
+            except ValueError:
+                try:
+                    dt = datetime.strptime(input_value, "%Y-%m-%d %H:%M:%S")
+                except ValueError:
+                    raise ValueError(f"Unable to parse date string: {input_value}")
+        elif isinstance(input_value, dict):
+            # Objeto con campos date/time
+            year = input_value.get("year", datetime.now().year)
+            month = input_value.get("month", datetime.now().month)
+            day = input_value.get("day", datetime.now().day)
+            hour = input_value.get("hour", 0)
+            minute = input_value.get("minute", 0)
+            second = input_value.get("second", 0)
+            dt = datetime(year, month, day, hour, minute, second)
+        else:
+            raise ValueError(f"Unsupported date format: {type(input_value)}")
+        
+        # Aplicar timezone si se especificó y la fecha no tiene timezone
+        if dt.tzinfo is None and timezone_str:
+            try:
+                tz = pytz.timezone(timezone_str)
+                dt = tz.localize(dt)
+            except pytz.exceptions.UnknownTimeZoneError:
+                logger.warning(f"Unknown timezone: {timezone_str}, using UTC")
+                dt = pytz.UTC.localize(dt)
+        elif dt.tzinfo is None:
+            dt = pytz.UTC.localize(dt)
+        
+        # Calcular delta
+        delta_kwargs = {}
+        if "years" in config:
+            delta_kwargs["days"] = delta_kwargs.get("days", 0) + (config["years"] * 365)
+        if "months" in config:
+            delta_kwargs["days"] = delta_kwargs.get("days", 0) + (config["months"] * 30)
+        if "days" in config:
+            delta_kwargs["days"] = delta_kwargs.get("days", 0) + config["days"]
+        if "hours" in config:
+            delta_kwargs["hours"] = config["hours"]
+        if "minutes" in config:
+            delta_kwargs["minutes"] = config["minutes"]
+        if "seconds" in config:
+            delta_kwargs["seconds"] = config["seconds"]
+        
+        delta = timedelta(**delta_kwargs)
+        
+        # Aplicar operación
+        if operation == "add":
+            result_dt = dt + delta
+        elif operation == "subtract":
+            result_dt = dt - delta
+        else:
+            raise ValueError(f"Unknown operation: {operation}")
+        
+        # Formatear según el tipo solicitado
+        if format_type == "timestamp":
+            result = result_dt.timestamp()
+        elif format_type == "custom" and format_string:
+            result = result_dt.strftime(format_string)
+        else:  # iso8601 (default)
+            result = result_dt.isoformat()
+        
+        # Guardar en data model
+        self._set_data(output_path, result)
+        
+        return result
 
 
 # Ejemplo de uso
