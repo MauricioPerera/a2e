@@ -17,10 +17,10 @@ concurrency:
 
 jobs:
   deploy:
+    runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -33,20 +33,38 @@ jobs:
           mkdir -p _site
           
           # Copy index.html
-          if [ -f docs/index.html ]; then
-            cp docs/index.html _site/index.html
-          fi
+          [ -f docs/index.html ] && cp docs/index.html _site/index.html || echo "docs/index.html not found"
           
           # Copy all markdown files from root
-          find . -maxdepth 1 -name "*.md" -type f -exec cp {} _site/ \;
+          for f in *.md; do
+            [ -f "$f" ] && cp "$f" _site/ || true
+          done
           
           # Copy LICENSE and .nojekyll
           [ -f LICENSE ] && cp LICENSE _site/ || true
           [ -f .nojekyll ] && cp .nojekyll _site/ || true
           
-          # List files
-          echo "Files to deploy:"
-          ls -la _site/
+          # Verify files exist
+          echo "Files in _site:"
+          ls -la _site/ || echo "No files found!"
+          
+          # Ensure at least index.html exists
+          if [ ! -f _site/index.html ]; then
+            echo "Creating default index.html"
+            cat > _site/index.html << 'EOF'
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>A2E Protocol</title>
+  <meta http-equiv="refresh" content="0; url=README.html">
+</head>
+<body>
+  <p>Redirecting to <a href="README.html">README</a></p>
+</body>
+</html>
+EOF
+          fi
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
