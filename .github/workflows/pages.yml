@@ -28,25 +28,38 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v4
 
+      - name: Setup Node.js (for markdown processing)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
       - name: Copy documentation
         run: |
           mkdir -p _site
-          # Copy main documentation files
-          cp README.md _site/
-          cp SPECIFICATION.md _site/
-          cp SPECIFICATION_JSON_SCHEMAS.md _site/
-          cp PROTOCOL_OVERVIEW.md _site/
-          cp PROTOCOL_INDEX.md _site/
-          cp CHANGELOG.md _site/
-          cp LICENSE _site/
           
-          # Copy all other markdown docs
-          cp *.md _site/ 2>/dev/null || true
-          
-          # Copy index.html
+          # Copy index.html first (main page)
           if [ -f docs/index.html ]; then
-            cp docs/index.html _site/
+            cp docs/index.html _site/index.html
+          else
+            # Create a simple index if docs/index.html doesn't exist
+            echo '<!DOCTYPE html><html><head><meta http-equiv="refresh" content="0; url=README.html"></head><body>Redirecting to <a href="README.html">README</a></body></html>' > _site/index.html
           fi
+          
+          # Copy all markdown files
+          for file in *.md; do
+            if [ -f "$file" ]; then
+              cp "$file" "_site/$file"
+            fi
+          done
+          
+          # Copy LICENSE if exists
+          if [ -f LICENSE ]; then
+            cp LICENSE _site/
+          fi
+          
+          # List what we're deploying
+          echo "Files to deploy:"
+          ls -la _site/
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
