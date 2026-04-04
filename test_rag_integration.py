@@ -26,7 +26,7 @@ def test_rag_initialization():
     try:
         from rag_integration import A2ERAGSystem
         
-        rag = A2ERAGSystem(embedding_model="all-MiniLM-L6-v2")
+        rag = A2ERAGSystem(embedding_model="multilingual-e5-small")
         print("   [OK] RAG system initialized")
         print(f"   [OK] Database: {rag.db.name}")
         print(f"   [OK] Vector index dimension: {rag.vector_index.dimension}")
@@ -69,7 +69,7 @@ def test_operations_indexing():
     try:
         from rag_integration import A2ERAGSystem
         
-        rag = A2ERAGSystem(embedding_model="all-MiniLM-L6-v2")
+        rag = A2ERAGSystem(embedding_model="multilingual-e5-small")
         
         # Verificar que el catálogo existe
         catalog_path = Path(__file__).parent / "workflow_catalog.json"

@@ -3,101 +3,106 @@
 ## Estado Actual
 
 ✅ **Código de integración completo**
-⚠️ **Requiere configuración de dependencias**
+⚠️ **Requiere configuración de minimemory**
+
+## Modelo de Embeddings
+
+A2E usa **intfloat/multilingual-e5-small** como modelo de embeddings:
+
+| Propiedad | Valor |
+|-----------|-------|
+| Modelo | `intfloat/multilingual-e5-small` |
+| Dimensiones | 384 |
+| Idiomas | 100+ |
+| Tamaño | ~100M parámetros |
+| Prefijos | `query:` para búsquedas, `passage:` para contenido indexado |
+
+Los prefijos se aplican automáticamente en `_remember()` y `_recall()`.
 
 ## Pasos para Habilitar RAG
 
-### 1. Instalar Dependencias de Embeddings
+### 1. Instalar minimemory SDK
 
 ```bash
-pip install sentence-transformers torch transformers
+pip install minimemory
 ```
 
-Si tienes problemas con Keras 3:
-```bash
-pip install tf-keras
-```
-
-### 2. Hacer Accesible rag_catalog
-
-El módulo `rag_catalog` debe estar en el PYTHONPATH. Opciones:
-
-#### Opción A: Agregar al PYTHONPATH
-
-**Linux/Mac:**
-```bash
-export PYTHONPATH="${PYTHONPATH}:$(pwd)/a2ui/samples/agent/adk"
-```
-
-**Windows:**
-```cmd
-set PYTHONPATH=%PYTHONPATH%;D:\repos\a2ui\a2ui\samples\agent\adk
-```
-
-#### Opción B: Instalar como paquete
+### 2. Configurar Variables de Entorno
 
 ```bash
-cd a2ui/samples/agent/adk/rag_catalog
-pip install -e .
+export MINIMEMORY_URL="https://your-minimemory-instance.com"
+export MINIMEMORY_API_KEY="your-api-key"
+export MINIMEMORY_NAMESPACE="a2e"  # opcional, default "a2e"
 ```
 
 ### 3. Verificar Instalación
 
 ```bash
-cd a2ui/samples/agent/adk/workflow_executor
 python -c "from rag_integration import A2ERAGSystem; print('RAG OK')"
 ```
 
 ## Uso
 
-Una vez configurado, RAG se activa automáticamente:
+```python
+from rag_integration import A2ERAGSystem
+
+# Inicializar (usa minimemory + multilingual-e5-small)
+rag = A2ERAGSystem()
+
+# Indexar catálogo de operaciones
+rag.index_operations_catalog("workflow_catalog.json")
+
+# Búsqueda semántica (funciona en 100+ idiomas)
+operations = rag.search_operations("consulta API", top_k=5)
+endpoints = rag.search_endpoints("obtener usuarios", top_k=3)
+
+# Búsqueda de SQL queries
+queries = rag.search_sql_queries("ventas por mes", database="analytics")
+```
+
+## Soporte Multilingue
+
+Gracias a multilingual-e5-small, las búsquedas funcionan en cualquier idioma:
 
 ```python
-from api_knowledge_base import APIKnowledgeBase
+# Español
+rag.search_operations("filtrar datos de un array")
 
-# RAG se activa automáticamente (use_rag=True por defecto)
-api_kb = APIKnowledgeBase(
-    operations_catalog_path="workflow_catalog.json"
-)
+# English
+rag.search_operations("filter data from an array")
 
-# Búsqueda semántica funciona
-operations = api_kb.search_operations("consulta API", top_k=5)
+# Deutsch
+rag.search_operations("Daten aus einem Array filtern")
 ```
 
 ## Sin RAG
 
-Si RAG no está disponible, A2E funciona sin él:
+Si minimemory no está configurado, A2E funciona sin RAG:
 
 ```python
-# Funciona sin RAG (búsqueda por keywords)
+from api_knowledge_base import APIKnowledgeBase
+
 api_kb = APIKnowledgeBase(use_rag=False)
 endpoints = api_kb.search_endpoints("usuarios")  # Búsqueda por keywords
 ```
 
 ## Solución de Problemas
 
-### "No module named 'rag_catalog'"
+### "Could not import minimemory SDK"
 
-**Causa**: `rag_catalog` no está en PYTHONPATH
+**Causa**: minimemory no está instalado
 
-**Solución**: Agregar al PYTHONPATH o instalar como paquete
+**Solución**: `pip install minimemory`
 
-### "No module named 'tf_keras'"
+### "RAG components not configured"
 
-**Causa**: Dependencia faltante de sentence-transformers
+**Causa**: Variables de entorno MINIMEMORY_URL / MINIMEMORY_API_KEY no están definidas
 
-**Solución**: `pip install tf-keras`
+**Solución**: Configurar las variables de entorno o pasar `base_url` y `api_key` al constructor
 
 ### "RAG system not available"
 
 **Causa**: RAG no pudo inicializarse
 
-**Solución**: Verificar que todas las dependencias están instaladas
-
-## Conclusión
-
-El código de integración está completo. Solo necesitas:
-1. Instalar dependencias de embeddings
-2. Hacer `rag_catalog` accesible
-3. ¡Listo! RAG funciona automáticamente
+**Solución**: Verificar que minimemory está instalado y las credenciales son correctas
 

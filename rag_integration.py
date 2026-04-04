@@ -13,6 +13,10 @@ from typing import Dict, Any, List, Optional
 
 logger = logging.getLogger(__name__)
 
+# Default embedding model — multilingual-e5-small supports 100 languages
+# and requires query:/passage: prefixes for optimal performance
+DEFAULT_EMBEDDING_MODEL = "intfloat/multilingual-e5-small"
+
 # Intentar importar minimemory
 MiniMemoryClient = None
 SearchMode = None
@@ -56,7 +60,7 @@ class A2ERAGSystem:
     def __init__(
         self,
         db_path: Optional[str] = None,
-        embedding_model: str = "all-MiniLM-L6-v2",
+        embedding_model: str = DEFAULT_EMBEDDING_MODEL,
         use_hnsw: bool = True,
         max_elements: int = 50000,
         ef_construction: int = 200,
@@ -119,13 +123,18 @@ class A2ERAGSystem:
 
         logger.info(
             f"A2E RAG System initialized with minimemory "
-            f"(url={self._base_url}, namespace={self._namespace})"
+            f"(url={self._base_url}, namespace={self._namespace}, "
+            f"model={DEFAULT_EMBEDDING_MODEL})"
         )
 
     async def _remember(self, content: str, metadata: Dict[str, Any]) -> str:
-        """Store a memory and return its ID."""
+        """Store a memory and return its ID.
+
+        Prepends 'passage: ' prefix required by multilingual-e5-small
+        for optimal embedding quality on indexed content.
+        """
         memory, _, _ = await self._client.remember(
-            content,
+            f"passage: {content}",
             type=MemoryType.KNOWLEDGE,
             importance=0.7,
             metadata=metadata,
@@ -139,7 +148,11 @@ class A2ERAGSystem:
         top_k: int = 10,
         mode: str = "hybrid",
     ) -> List[Dict[str, Any]]:
-        """Search memories and return results as dicts."""
+        """Search memories and return results as dicts.
+
+        Prepends 'query: ' prefix required by multilingual-e5-small
+        for optimal embedding quality on search queries.
+        """
         search_mode = {
             "hybrid": SearchMode.HYBRID,
             "vector": SearchMode.VECTOR,
@@ -147,7 +160,7 @@ class A2ERAGSystem:
         }.get(mode, SearchMode.HYBRID)
 
         results, _ = await self._client.recall(
-            query,
+            f"query: {query}",
             limit=top_k,
             mode=search_mode,
             type=MemoryType.KNOWLEDGE,

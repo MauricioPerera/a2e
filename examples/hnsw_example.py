@@ -67,7 +67,7 @@ def main():
     print("Test 1: HNSW Index")
     print("="*60)
     rag_hnsw = A2ERAGSystem(
-        embedding_model="all-MiniLM-L6-v2",
+        embedding_model="multilingual-e5-small",
         use_hnsw=True,
         max_elements=10000
     )
@@ -78,7 +78,7 @@ def main():
     print("Test 2: Exhaustive Search")
     print("="*60)
     rag_exhaustive = A2ERAGSystem(
-        embedding_model="all-MiniLM-L6-v2",
+        embedding_model="multilingual-e5-small",
         use_hnsw=False
     )
     index_time_exh, search_time_exh = benchmark_search(rag_exhaustive, 1000, 20)

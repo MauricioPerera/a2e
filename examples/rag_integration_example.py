@@ -22,9 +22,9 @@ def main():
     
     # 1. Inicializar sistema RAG
     print("\n[1/5] Initializing RAG system with LokiJS and local embeddings...")
-    rag = A2ERAGSystem(embedding_model="all-MiniLM-L6-v2")
+    rag = A2ERAGSystem(embedding_model="multilingual-e5-small")
     print("   [OK] RAG system initialized")
-    print(f"   [OK] Using embedding model: all-MiniLM-L6-v2")
+    print(f"   [OK] Using embedding model: multilingual-e5-small")
     print(f"   [OK] LokiJS database created")
     
     # 2. Indexar catálogo de operaciones
