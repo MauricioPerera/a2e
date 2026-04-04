@@ -13,7 +13,9 @@ from datetime import datetime
 def logger():
     """Fixture para crear logger con directorio temporal"""
     with tempfile.TemporaryDirectory() as tmpdir:
-        yield AuditLogger(log_dir=tmpdir)
+        audit_logger = AuditLogger(log_dir=tmpdir)
+        yield audit_logger
+        audit_logger.close()
 
 
 def test_log_execution_start(logger):

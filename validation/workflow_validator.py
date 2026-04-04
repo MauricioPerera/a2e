@@ -8,6 +8,10 @@ from typing import Dict, Any, List, Optional, Tuple, Set
 from enum import Enum
 from urllib.parse import urlparse
 
+from executor.workflow_executor import OPERATION_HANDLERS
+
+VALID_OPERATION_TYPES = set(OPERATION_HANDLERS.keys())
+
 
 class ValidationLevel(Enum):
     """Nivel de validación"""
@@ -96,7 +100,11 @@ class WorkflowValidator:
             # Validar estructura básica
             structure_errors = self._validate_structure(operations)
             errors.extend(structure_errors)
-            
+
+            # Validar tipos de operación conocidos
+            op_type_errors = self._validate_operation_types(operations)
+            errors.extend(op_type_errors)
+
             # Validar dependencias
             dependency_errors = self._validate_dependencies(operations)
             errors.extend(dependency_errors)
@@ -142,10 +150,22 @@ class WorkflowValidator:
             return False, errors
     
     def _parse_workflow(self, workflow_jsonl: str) -> List[Dict[str, Any]]:
-        """Parsea workflow y extrae operaciones"""
+        """Parsea workflow y extrae operaciones (soporta JSONL legacy y formato compacto)"""
+        stripped = workflow_jsonl.strip()
+
+        # Detect compact format: single JSON object with "operations" key
+        if stripped.startswith("{"):
+            try:
+                parsed = json.loads(stripped)
+                if isinstance(parsed, dict) and "operations" in parsed:
+                    return self._parse_compact_workflow(parsed)
+            except json.JSONDecodeError:
+                pass
+
+        # Legacy JSONL format
         operations = []
-        lines = workflow_jsonl.strip().split('\n')
-        
+        lines = stripped.split('\n')
+
         for line in lines:
             if not line.strip():
                 continue
@@ -156,7 +176,49 @@ class WorkflowValidator:
                     operations.extend(ops)
             except json.JSONDecodeError:
                 continue
-        
+
+        return operations
+
+    def _parse_compact_workflow(self, workflow: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Parsea formato compacto a la estructura interna de operaciones"""
+        operations = []
+        ops = workflow.get("operations", [])
+        prev_id = None
+
+        for op_def in ops:
+            op_id = op_def.get("id")
+            op_type = op_def.get("op")
+            if not op_id or not op_type:
+                continue
+
+            # Build config from all keys except id and op
+            config = {}
+            for key, value in op_def.items():
+                if key in ("id", "op"):
+                    continue
+                config[key] = value
+
+            # Resolve "input" shorthand to "inputPath"
+            if "input" in config:
+                input_ref = config.pop("input")
+                config["inputPath"] = f"/workflow/{input_ref}"
+            elif prev_id is not None and "inputPath" not in config:
+                _source_fields = ("value", "url", "sources", "expression", "text", "input_value")
+                has_own_source = any(f in config for f in _source_fields)
+                if not has_own_source:
+                    config["inputPath"] = f"/workflow/{prev_id}"
+
+            # Default outputPath
+            if "outputPath" not in config:
+                config["outputPath"] = f"/workflow/{op_id}"
+
+            # Convert to internal format
+            operations.append({
+                "id": op_id,
+                "operation": {op_type: config}
+            })
+            prev_id = op_id
+
         return operations
     
     def _validate_structure(self, operations: List[Dict[str, Any]]) -> List[ValidationError]:
@@ -202,6 +264,26 @@ class WorkflowValidator:
         
         return errors
     
+    def _validate_operation_types(self, operations: List[Dict[str, Any]]) -> List[ValidationError]:
+        """Validates that each operation uses a known operation type from the catalog"""
+        errors = []
+
+        for op in operations:
+            op_id = op.get("id")
+            operation = op.get("operation")
+            if not isinstance(operation, dict) or not operation:
+                continue
+            op_type = list(operation.keys())[0]
+            if op_type not in VALID_OPERATION_TYPES:
+                valid_list = ", ".join(sorted(VALID_OPERATION_TYPES))
+                errors.append(ValidationError(
+                    severity="error",
+                    message=f"Unknown operation type '{op_type}'. Valid types: {valid_list}",
+                    operation_id=op_id
+                ))
+
+        return errors
+
     def _validate_dependencies(self, operations: List[Dict[str, Any]]) -> List[ValidationError]:
         """Valida dependencias entre operaciones"""
         errors = []

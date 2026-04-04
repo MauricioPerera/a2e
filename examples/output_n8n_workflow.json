@@ -1,0 +1,154 @@
+{
+  "name": "Order Processing",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "5927479f-0e9f-4338-8559-53425d9cb9a2",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        250,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.example.com/orders",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{token}}"
+            }
+          ]
+        }
+      },
+      "id": "112062e2-f72b-4fde-a99f-7640b7251f3b",
+      "name": "ApiCall (fetch)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": ""
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "pending",
+              "operator": {
+                "type": "string",
+                "operation": "equal"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "b448d212-2e9a-4838-98ec-dcb6c46091ee",
+      "name": "FilterData (filter-pending)",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [
+        750,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.sort((a, b) => { const f = 'created_at'; const r = true ? -1 : 1; return a.json[f] > b.json[f] ? r : -r; });",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "a2700a44-a24d-4386-adcc-4f2acb30fe3b",
+      "name": "TransformData (sort-by-date)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "action": "format",
+        "date": "={{ $now }}",
+        "format": "iso8601",
+        "options": {
+          "timezone": "Europe/Madrid"
+        }
+      },
+      "id": "5bc6f63b-b945-47cb-a8c9-e1bd4c258c08",
+      "name": "DateTime (add-timestamp)",
+      "type": "n8n-nodes-base.dateTime",
+      "typeVersion": 2,
+      "position": [
+        1250,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "ApiCall (fetch)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ApiCall (fetch)": {
+      "main": [
+        [
+          {
+            "node": "FilterData (filter-pending)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FilterData (filter-pending)": {
+      "main": [
+        [
+          {
+            "node": "TransformData (sort-by-date)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "TransformData (sort-by-date)": {
+      "main": [
+        [
+          {
+            "node": "DateTime (add-timestamp)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "a2e_source": true
+  }
+}

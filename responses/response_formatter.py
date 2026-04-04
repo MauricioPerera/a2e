@@ -115,7 +115,14 @@ class ResponseFormatter:
                     op_info["duration_ms"] = result["duration_ms"]
             
             summary["operations"][op_id] = op_info
-        
+
+        # Determine overall status based on individual operation statuses
+        op_statuses = [info.get("status") for info in summary["operations"].values()]
+        if all(s == "failed" for s in op_statuses):
+            summary["status"] = "error"
+        elif any(s == "failed" for s in op_statuses):
+            summary["status"] = "partial_success"
+
         return summary
     
     def _format_full(self, execution_id: str, results: Dict[str, Any]) -> Dict[str, Any]:

@@ -1,24 +1,30 @@
 # A2E Protocol Specification
 
-**Version**: 1.0.0  
-**Status**: Stable  
-**Last Updated**: 2025-12-17
+**Version**: 2.0.0
+**Status**: Stable
+**Last Updated**: 2026-04-04
 
 ## Table of Contents
 
 1. [Overview](#overview)
 2. [Protocol Architecture](#protocol-architecture)
 3. [Message Format](#message-format)
-4. [Operations Catalog](#operations-catalog)
-5. [Execution Model](#execution-model)
-6. [Data Model](#data-model)
-7. [Security](#security)
-8. [Error Handling](#error-handling)
-9. [Rate Limiting](#rate-limiting)
-10. [Retry Logic](#retry-logic)
-11. [Caching](#caching)
-12. [API Reference](#api-reference)
-13. [Examples](#examples)
+4. [Compact Workflow Format](#compact-workflow-format)
+5. [Operations Catalog](#operations-catalog)
+6. [Execution Model](#execution-model)
+7. [Parallel Execution (DAG)](#parallel-execution-dag)
+8. [Error Fallback (onError)](#error-fallback-onerror)
+9. [Middleware Architecture](#middleware-architecture)
+10. [Data Model](#data-model)
+11. [Security](#security)
+12. [Validation](#validation)
+13. [Error Handling](#error-handling)
+14. [Rate Limiting](#rate-limiting)
+15. [Retry Logic](#retry-logic)
+16. [Caching](#caching)
+17. [RAG Integration](#rag-integration)
+18. [API Reference](#api-reference)
+19. [Examples](#examples)
 
 ---
 
@@ -33,16 +39,17 @@
 3. **Controlled**: All operations are validated and monitored
 4. **Extensible**: New operations can be added to the catalog
 5. **Efficient**: RAG-based operation discovery reduces token usage
+6. **Parallel**: Independent operations execute concurrently via DAG scheduling
 
 ### Protocol Flow
 
 ```
 ┌─────────────┐
-│    Agent    │
+│    Agent     │
 │   (LLM)     │
 └──────┬──────┘
        │ 1. Query capabilities
-       │ 2. Generate workflow (JSONL)
+       │ 2. Generate workflow (JSONL or compact JSON)
        │ 3. Validate workflow
        │ 4. Execute workflow
        ▼
@@ -56,9 +63,10 @@
        ▼
 ┌─────────────────────┐
 │  Workflow Executor   │
-│  - Parse JSONL      │
-│  - Execute ops       │
-│  - Return results    │
+│  - Parse JSONL/JSON │
+│  - Build DAG        │
+│  - Execute ops      │
+│  - Return results   │
 └─────────────────────┘
 ```
 
@@ -70,67 +78,47 @@
 
 1. **Agent**: AI model that generates workflows
 2. **A2E Server**: Validates and executes workflows
-3. **Workflow Executor**: Interprets and runs operations
-4. **Operations Catalog**: Whitelist of available operations
+3. **Workflow Executor**: Interprets and runs operations (with middleware pipeline)
+4. **Operations Catalog**: Whitelist of available operations (18 registered handlers)
 5. **API Knowledge Base**: Repository of permitted APIs
 6. **Credentials Vault**: Secure credential storage
-7. **RAG System**: Semantic search for operations/APIs
+7. **RAG System**: Semantic search for operations/APIs (backed by minimemory)
 
 ### Message Transport
 
-A2E uses **JSON Lines (JSONL)** format for streaming workflow definitions:
+A2E supports two workflow formats:
 
-- Each line is a valid JSON object
-- Messages are processed sequentially
-- Supports incremental workflow building
+- **JSONL (legacy)**: Each line is a valid JSON object; messages are processed sequentially
+- **Compact JSON**: A single JSON object with an `operations` array and `execute` field
 
 ---
 
 ## Message Format
 
-### JSONL Structure
+### JSONL Structure (Legacy)
 
-A2E workflows are defined as JSONL streams with the following message types:
+A2E workflows can be defined as JSONL streams with the following message types:
 
 #### 1. Operation Update
 
-Defines or updates an operation in the workflow.
+Defines or updates operations in the workflow.
 
 ```json
 {
-  "type": "operationUpdate",
-  "operationId": "op-1",
-  "operation": {
-    "ApiCall": {
-      "method": "GET",
-      "url": "https://api.example.com/users",
-      "headers": {},
-      "outputPath": "/workflow/users"
-    }
-  }
-}
-```
-
-**Schema**:
-```json
-{
-  "type": "object",
-  "required": ["type", "operationId", "operation"],
-  "properties": {
-    "type": {
-      "type": "string",
-      "enum": ["operationUpdate"]
-    },
-    "operationId": {
-      "type": "string",
-      "pattern": "^[a-zA-Z0-9_-]+$"
-    },
-    "operation": {
-      "type": "object",
-      "minProperties": 1,
-      "maxProperties": 1,
-      "additionalProperties": false
-    }
+  "operationUpdate": {
+    "workflowId": "my-workflow",
+    "operations": [
+      {
+        "id": "op-1",
+        "operation": {
+          "ApiCall": {
+            "method": "GET",
+            "url": "https://api.example.com/users",
+            "outputPath": "/workflow/users"
+          }
+        }
+      }
+    ]
   }
 }
 ```
@@ -141,75 +129,97 @@ Signals the start of workflow execution.
 
 ```json
 {
-  "type": "beginExecution",
-  "executionId": "exec-123",
-  "operationOrder": ["op-1", "op-2", "op-3"]
-}
-```
-
-**Schema**:
-```json
-{
-  "type": "object",
-  "required": ["type", "executionId", "operationOrder"],
-  "properties": {
-    "type": {
-      "type": "string",
-      "enum": ["beginExecution"]
-    },
-    "executionId": {
-      "type": "string",
-      "pattern": "^[a-zA-Z0-9_-]+$"
-    },
-    "operationOrder": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      },
-      "minItems": 1
-    }
+  "beginExecution": {
+    "root": "op-1"
   }
 }
 ```
 
-### Complete Workflow Example
+The `root` field specifies the entry-point operation. The executor builds execution order from dependencies automatically.
+
+### Complete JSONL Workflow Example
 
 ```jsonl
-{"type":"operationUpdate","operationId":"fetch-users","operation":{"ApiCall":{"method":"GET","url":"https://api.example.com/users","outputPath":"/workflow/users"}}}
-{"type":"operationUpdate","operationId":"filter-active","operation":{"FilterData":{"inputPath":"/workflow/users","conditions":[{"field":"status","operator":"==","value":"active"}],"outputPath":"/workflow/active-users"}}}
-{"type":"beginExecution","executionId":"exec-123","operationOrder":["fetch-users","filter-active"]}
+{"operationUpdate":{"workflowId":"demo","operations":[{"id":"fetch-users","operation":{"ApiCall":{"method":"GET","url":"https://api.example.com/users","outputPath":"/workflow/users"}}},{"id":"filter-active","operation":{"FilterData":{"inputPath":"/workflow/users","conditions":[{"field":"status","operator":"==","value":"active"}],"outputPath":"/workflow/active-users"}}}]}}
+{"beginExecution":{"root":"fetch-users"}}
 ```
+
+---
+
+## Compact Workflow Format
+
+The compact format is an alternative to JSONL that reduces verbosity. It is a single JSON object with an `operations` array and an `execute` field.
+
+### Structure
+
+```json
+{
+  "operations": [
+    {"id": "op-id", "op": "OperationType", "param1": "value1", ...}
+  ],
+  "execute": "root-operation-id"
+}
+```
+
+### Rules
+
+- **`op`** field specifies the operation type (flat, not nested)
+- **`input`** is a shorthand for `inputPath: "/workflow/{input}"` — reference another operation by ID
+- **`outputPath`** defaults to `"/workflow/{id}"` when omitted
+- **Implicit piping**: when `input` is omitted and the operation has no own data source (`value`, `url`, `sources`, etc.), it automatically receives the previous operation's output
+- **`execute`** specifies the root operation; execution order is derived from dependencies
+
+### Before/After Comparison
+
+**JSONL (verbose)**:
+```jsonl
+{"operationUpdate":{"operations":[{"id":"fetch","operation":{"ApiCall":{"method":"GET","url":"https://api.example.com/users","outputPath":"/workflow/fetch"}}},{"id":"filter","operation":{"FilterData":{"inputPath":"/workflow/fetch","conditions":[{"field":"active","operator":"==","value":true}],"outputPath":"/workflow/filter"}}}]}}
+{"beginExecution":{"root":"fetch"}}
+```
+
+**Compact JSON (equivalent)**:
+```json
+{
+  "operations": [
+    {"id": "fetch", "op": "ApiCall", "method": "GET", "url": "https://api.example.com/users"},
+    {"id": "filter", "op": "FilterData", "conditions": [{"field": "active", "operator": "==", "value": true}]}
+  ],
+  "execute": "fetch"
+}
+```
+
+In the compact version:
+- `filter` implicitly receives `inputPath: "/workflow/fetch"` (previous operation)
+- Both operations get auto-generated `outputPath` values (`/workflow/fetch`, `/workflow/filter`)
 
 ---
 
 ## Operations Catalog
 
-### Operation Types
+A2E supports 18 registered operation types, organized into four categories.
+
+### Core Operations
 
 #### 1. ApiCall
 
 Executes an HTTP request.
 
-**Properties**:
-- `method` (required): HTTP method (`GET`, `POST`, `PUT`, `DELETE`, `PATCH`)
-- `url` (required): Endpoint URL (supports path references: `{/workflow/data}`)
-- `headers` (optional): HTTP headers (supports credential references)
-- `body` (optional): Request body (for POST/PUT)
-- `outputPath` (required): Data model path to store response
-- `timeout` (optional): Timeout in milliseconds (default: 30000)
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `method` | yes | HTTP method (`GET`, `POST`, `PUT`, `DELETE`, `PATCH`) |
+| `url` | yes | Endpoint URL (supports path references: `{/workflow/data}`) |
+| `headers` | no | HTTP headers (supports credential references) |
+| `body` | no | Request body (for POST/PUT) |
+| `outputPath` | yes | Data model path to store response |
+| `timeout` | no | Timeout in milliseconds |
 
-**Example**:
 ```json
 {
   "ApiCall": {
     "method": "GET",
     "url": "https://api.example.com/users",
     "headers": {
-      "Authorization": {
-        "credentialRef": {
-          "id": "api-key-123"
-        }
-      }
+      "Authorization": {"credentialRef": {"id": "api-key-123"}}
     },
     "outputPath": "/workflow/users"
   }
@@ -220,30 +230,20 @@ Executes an HTTP request.
 
 Filters an array based on conditions.
 
-**Properties**:
-- `inputPath` (required): Path to input array
-- `conditions` (required): Array of filter conditions
-- `outputPath` (required): Path to store filtered results
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `inputPath` | yes | Path to input array |
+| `conditions` | yes | Array of `{field, operator, value}` conditions |
+| `outputPath` | yes | Path to store filtered results |
 
-**Condition Format**:
-```json
-{
-  "field": "status",
-  "operator": "==",
-  "value": "active"
-}
-```
+**Operators**: `==`, `!=`, `>`, `<`, `>=`, `<=`, `contains`, `startsWith`, `endsWith`
 
-**Operators**: `==`, `!=`, `>`, `<`, `>=`, `<=`, `in`, `contains`, `startsWith`, `endsWith`
-
-**Example**:
 ```json
 {
   "FilterData": {
     "inputPath": "/workflow/users",
     "conditions": [
-      {"field": "points", "operator": ">", "value": 100},
-      {"field": "status", "operator": "==", "value": "active"}
+      {"field": "points", "operator": ">", "value": 100}
     ],
     "outputPath": "/workflow/filtered-users"
   }
@@ -252,132 +252,190 @@ Filters an array based on conditions.
 
 #### 3. TransformData
 
-Transforms data (map, sort, group, etc.).
+Transforms data using common operations.
 
-**Properties**:
-- `inputPath` (required): Path to input data
-- `transform` (required): Transformation type
-- `config` (optional): Transformation-specific configuration
-- `outputPath` (required): Path to store transformed data
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `inputPath` | yes | Path to input data |
+| `transform` | yes | Transform type: `map`, `sort`, `pick`, `flatten`, `group`, `unique`, `reverse`, `slice` |
+| `config` | no | Transform-specific configuration |
+| `outputPath` | yes | Path to store result |
 
-**Transform Types**:
-- `map`: Apply function to each element
-- `sort`: Sort array by field
-- `group`: Group by field
-- `aggregate`: Calculate aggregations
-- `select`: Select specific fields
+Transform configs:
+- `map`: `{fields: string[]}` — extract fields from each array element
+- `sort`: `{field?: string, reverse?: boolean}`
+- `pick`: `{fields: string[]}` — select fields from an object
+- `flatten`: no config — flattens nested arrays one level
+- `group`: `{field: string}` — group elements by field
+- `unique`: no config — remove duplicates
+- `reverse`: no config — reverse array order
+- `slice`: `{start?: number, end?: number}`
 
-**Example**:
+#### 4. StoreData
+
+Stores data persistently.
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `inputPath` | yes | Path to data |
+| `storage` | yes | Storage type (`localStorage`, `sessionStorage`, `indexedDB`, `database`) |
+| `key` | yes | Storage key/path |
+| `format` | no | Format: `json`, `string`, `binary` |
+
+#### 5. Wait
+
+Pauses execution for a specified duration.
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `duration` | yes | Duration in milliseconds |
+
+#### 6. Conditional
+
+Conditional execution based on data evaluation.
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `condition` | yes | `{path, operator, value}` — operators: `==`, `!=`, `>`, `<`, `exists`, `isEmpty` |
+| `ifTrue` | yes | ID of operation to execute if true |
+| `ifFalse` | no | ID of operation to execute if false |
+
+#### 7. MergeData
+
+Merges multiple data sources.
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `sources` | yes | Array of input paths |
+| `strategy` | yes | Merge strategy: `merge`, `concat`, `intersect`, `union` |
+| `outputPath` | yes | Path to store merged data |
+
+#### 8. Loop
+
+Iterates over an array, executing operations for each item.
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `inputPath` | yes | Path to array |
+| `operations` | yes | IDs of operations to execute per item |
+| `outputPath` | no | Path to store loop results |
+
+### Utility Operations
+
+#### 9. Calculate
+
+Performs mathematical operations.
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `inputPath` | yes | Path to number(s) |
+| `operation` | yes | `add`, `subtract`, `multiply`, `divide`, `power`, `modulo`, `round`, `ceil`, `floor`, `abs`, `max`, `min`, `sum`, `average` |
+| `operand` | no | Second operand (for binary operations), number or path |
+| `precision` | no | Decimal precision for `round` |
+| `outputPath` | yes | Path to store result |
+
+#### 10. EncodeDecode
+
+Encodes or decodes data.
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `inputPath` | yes | Path to data |
+| `operation` | yes | `encode` or `decode` |
+| `encoding` | yes | `base64`, `url`, `html` |
+| `outputPath` | yes | Path to store result |
+
+#### 11. ExtractText
+
+Extracts information from text using regular expressions.
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `inputPath` | yes | Path to text |
+| `pattern` | yes | Regular expression |
+| `extractAll` | no | Extract all matches (true) or first only (false) |
+| `outputPath` | yes | Path to store extracted results |
+
+#### 12. FormatText
+
+Formats text using templates or transformations.
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `inputPath` | yes | Path to text or data |
+| `format` | yes | `template`, `upper`, `lower`, `title`, `capitalize`, `trim`, `replace` |
+| `template` | no | Template string (for `template` format), uses `{field}` placeholders |
+| `replacements` | no | Key-value map of replacements (for `replace` format) |
+| `outputPath` | yes | Path to store formatted text |
+
+#### 13. ValidateData
+
+Validates data against predefined rules.
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `inputPath` | yes | Path to data |
+| `validationType` | yes | `email`, `url`, `number`, `integer`, `phone`, `date`, `custom` |
+| `pattern` | no | Regex for `custom` validation |
+| `outputPath` | yes | Path to store validation result (`{valid, value, error?}`) |
+
+### DateTime Operations
+
+#### 14. DateTime (unified)
+
+Unified date/time operation supporting three modes.
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `mode` | yes | `now`, `convert`, or `calculate` |
+| `timezone` | no | Timezone (e.g. `UTC`, `America/New_York`) |
+| `format` | no | Output format: `iso8601` (default), `timestamp`, `custom` |
+| `formatString` | no | Custom strftime format string (only if `format=custom`) |
+| `input` | no | Path to input date (required for `convert` and `calculate` modes) |
+| `amount` | no | Time units to add/subtract (only for `calculate` mode) |
+| `unit` | no | `years`, `months`, `days`, `hours`, `minutes`, `seconds` (only for `calculate`) |
+| `operation` | no | `add` or `subtract` (only for `calculate` mode) |
+| `outputPath` | yes | Path to store result |
+
 ```json
 {
-  "TransformData": {
-    "inputPath": "/workflow/users",
-    "transform": "sort",
-    "config": {
-      "field": "points",
-      "order": "desc"
-    },
-    "outputPath": "/workflow/sorted-users"
+  "DateTime": {
+    "mode": "now",
+    "timezone": "America/New_York",
+    "format": "iso8601",
+    "outputPath": "/workflow/current-time"
   }
 }
 ```
 
-#### 4. Conditional
+#### 15. GetCurrentDateTime (deprecated)
 
-Conditional execution based on data.
+Gets current date/time. **Use `DateTime` with `mode: "now"` instead.**
 
-**Properties**:
-- `condition` (required): Condition to evaluate
-- `ifTrue` (required): Operations to execute if true
-- `ifFalse` (optional): Operations to execute if false
+#### 16. ConvertTimezone (deprecated)
 
-**Example**:
+Converts a date/time between timezones. **Use `DateTime` with `mode: "convert"` instead.**
+
+#### 17. DateCalculation (deprecated)
+
+Performs date arithmetic. **Use `DateTime` with `mode: "calculate"` instead.**
+
+### Data Operations
+
+#### 18. SetData
+
+Stores a literal value directly in the workflow data model, without requiring an input path.
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `value` | yes | The literal value to store (any JSON type) |
+| `outputPath` | yes | Path in data model where to store the value |
+
 ```json
 {
-  "Conditional": {
-    "condition": {
-      "path": "/workflow/count",
-      "operator": ">",
-      "value": 0
-    },
-    "ifTrue": ["op-process"],
-    "ifFalse": ["op-skip"]
-  }
-}
-```
-
-#### 5. Loop
-
-Iterate over an array.
-
-**Properties**:
-- `inputPath` (required): Path to array
-- `operations` (required): Operations to execute for each item
-- `outputPath` (optional): Path to store results
-
-**Example**:
-```json
-{
-  "Loop": {
-    "inputPath": "/workflow/users",
-    "operations": ["op-process-user"],
-    "outputPath": "/workflow/processed-users"
-  }
-}
-```
-
-#### 6. StoreData
-
-Store data persistently.
-
-**Properties**:
-- `inputPath` (required): Path to data
-- `storage` (required): Storage type (`localStorage`, `sessionStorage`, `file`)
-- `key` (required): Storage key/path
-
-**Example**:
-```json
-{
-  "StoreData": {
-    "inputPath": "/workflow/results",
-    "storage": "localStorage",
-    "key": "workflow-results"
-  }
-}
-```
-
-#### 7. Wait
-
-Wait for a specified duration.
-
-**Properties**:
-- `duration` (required): Duration in milliseconds
-
-**Example**:
-```json
-{
-  "Wait": {
-    "duration": 1000
-  }
-}
-```
-
-#### 8. MergeData
-
-Merge multiple data sources.
-
-**Properties**:
-- `sources` (required): Array of input paths
-- `strategy` (required): Merge strategy (`concat`, `union`, `intersect`, `deepMerge`)
-- `outputPath` (required): Path to store merged data
-
-**Example**:
-```json
-{
-  "MergeData": {
-    "sources": ["/workflow/users", "/workflow/profiles"],
-    "strategy": "deepMerge",
-    "outputPath": "/workflow/merged"
+  "SetData": {
+    "value": {"name": "Alice", "role": "admin"},
+    "outputPath": "/workflow/default-user"
   }
 }
 ```
@@ -386,31 +444,139 @@ Merge multiple data sources.
 
 ## Execution Model
 
-### Execution Order
-
-Operations are executed in the order specified in `operationOrder`:
-
-1. **Sequential**: Operations execute one after another
-2. **Dependency Resolution**: Operations can reference previous results via paths
-3. **Error Handling**: Failed operations stop execution (configurable)
-
 ### Data Flow
+
+Operations communicate through the shared data model using `inputPath` and `outputPath`:
 
 ```
 Operation 1 → /workflow/data1
     ↓
-Operation 2 → /workflow/data2 (can reference /workflow/data1)
+Operation 2 → /workflow/data2 (reads /workflow/data1)
     ↓
-Operation 3 → /workflow/data3 (can reference /workflow/data1, /workflow/data2)
+Operation 3 → /workflow/data3 (reads /workflow/data1, /workflow/data2)
 ```
 
 ### Path Resolution
 
 Paths in the data model use `/workflow/` prefix:
 
-- `/workflow/users` - Result from operation with `outputPath: "/workflow/users"`
-- `/workflow/users[0]` - First element of array
-- `/workflow/users[0].name` - Nested property access
+- `/workflow/users` — Result from operation with `outputPath: "/workflow/users"`
+- `/workflow/users[0]` — First element of array
+- `/workflow/users[0].name` — Nested property access
+
+---
+
+## Parallel Execution (DAG)
+
+The executor builds a **dependency graph** (DAG) from `inputPath`/`outputPath` references and executes independent operations in parallel.
+
+### How It Works
+
+1. **Graph construction**: For each operation, the executor scans all config fields for `/workflow/<op_id>` references. These references become edges in the dependency graph.
+2. **Topological sorting**: Operations are grouped into levels using Kahn's algorithm. Each level contains operations whose dependencies have all been satisfied.
+3. **Parallel execution**: Operations within the same level run concurrently via `asyncio.gather`.
+4. **Sequential fallback**: If DAG construction fails (e.g. malformed references), execution falls back to the legacy sequential order.
+
+### Example
+
+Given three operations where `B` depends on `A`, and `C` depends on `A`:
+
+```
+Level 0: [A]          ← executes first
+Level 1: [B, C]       ← execute in parallel
+```
+
+```json
+{
+  "operations": [
+    {"id": "A", "op": "ApiCall", "method": "GET", "url": "https://api.example.com/data"},
+    {"id": "B", "op": "FilterData", "input": "A", "conditions": [{"field": "type", "operator": "==", "value": "x"}]},
+    {"id": "C", "op": "TransformData", "input": "A", "transform": "sort", "field": "name"}
+  ],
+  "execute": "A"
+}
+```
+
+Here `B` and `C` both depend only on `A`, so after `A` completes they run concurrently.
+
+---
+
+## Error Fallback (onError)
+
+Any operation can specify an `onError` field pointing to another operation ID. If the primary operation fails, the fallback operation executes instead and its result is propagated to downstream operations transparently.
+
+### Behavior
+
+1. The operation fails with an exception.
+2. The executor checks for `onError` in the operation config.
+3. If present and the target operation exists, the fallback operation executes.
+4. The fallback result is stored under the **original** operation's `outputPath`, so downstream operations receive the data without changes.
+5. The result is marked with `_fallback: true` for audit purposes.
+6. If the fallback also fails, both the original error and the fallback error are recorded.
+7. Fallback operations are excluded from the normal DAG execution graph — they only execute when triggered.
+
+### Example
+
+```json
+{
+  "operations": [
+    {"id": "fetch-live", "op": "ApiCall", "method": "GET", "url": "https://api.example.com/data", "onError": "fetch-cached"},
+    {"id": "fetch-cached", "op": "SetData", "value": {"data": [], "source": "cache"}},
+    {"id": "process", "op": "FilterData", "input": "fetch-live", "conditions": [{"field": "active", "operator": "==", "value": true}]}
+  ],
+  "execute": "fetch-live"
+}
+```
+
+If `fetch-live` fails, `fetch-cached` executes and its value is written to `/workflow/fetch-live`. The `process` operation receives the cached data without knowing a fallback occurred.
+
+---
+
+## Middleware Architecture
+
+The executor uses a middleware pipeline for cross-cutting concerns. Middlewares are registered at executor construction time and receive hooks throughout the execution lifecycle.
+
+### Middleware Protocol
+
+All middlewares extend `ExecutorMiddleware` and can override these hooks:
+
+| Hook | When Called |
+|------|------------|
+| `on_execution_start(execution_id, workflow_jsonl, agent_id)` | Workflow execution begins |
+| `on_operation_start(execution_id, op_id, op_type, config)` | Before each operation |
+| `on_operation_complete(execution_id, op_id, op_type, result, duration_ms)` | After successful operation |
+| `on_operation_error(execution_id, op_id, op_type, error, duration_ms)` | After failed operation |
+| `on_execution_complete(execution_id, results, duration_ms)` | Workflow execution ends |
+| `process_config(op_type, config) -> config` | Pre-process operation config (e.g. inject credentials) |
+| `process_result(op_type, config, result) -> result` | Post-process operation result (e.g. cache it) |
+
+### Built-in Middlewares
+
+#### AuditMiddleware
+
+Logs execution events, operation timing, credential usage, and results through the audit logger. Replaces the legacy `MonitoredWorkflowExecutor`.
+
+#### CacheMiddleware
+
+Stores and retrieves operation results from a cache. On `process_config`, checks for a cached result and injects it as `_cached_result`. On `process_result`, stores the result in cache.
+
+#### VaultMiddleware
+
+Injects credentials into `ApiCall` operations. Resolves `credentialRef` references to actual values at runtime via the `CredentialInjector`.
+
+### Usage
+
+```python
+from executor.workflow_executor import WorkflowExecutor, AuditMiddleware, CacheMiddleware, VaultMiddleware
+
+executor = WorkflowExecutor(middlewares=[
+    AuditMiddleware(audit_logger),
+    CacheMiddleware(cache),
+    VaultMiddleware(vault),
+])
+executor.load_workflow(workflow_json)
+results = await executor.execute()
+```
 
 ---
 
@@ -432,10 +598,10 @@ The data model is a hierarchical JSON structure:
 
 ### Path Syntax
 
-- `/workflow/key` - Direct access
-- `/workflow/array[0]` - Array index
-- `/workflow/object.field` - Property access
-- `/workflow/array[0].field` - Nested access
+- `/workflow/key` — Direct access
+- `/workflow/array[0]` — Array index
+- `/workflow/object.field` — Property access
+- `/workflow/array[0].field` — Nested access
 
 ### Type System
 
@@ -464,19 +630,9 @@ Authorization: Bearer <api-key>
 - **API Permissions**: Agents can only call permitted APIs
 - **Credential Access**: Agents reference credentials by ID, never see values
 
-### Validation
-
-All workflows are validated before execution:
-
-1. **Structural Validation**: JSON schema compliance
-2. **Operation Validation**: Operations must exist in catalog
-3. **Permission Validation**: Agent has permission for operations
-4. **Dependency Validation**: All referenced paths exist
-5. **Type Validation**: Data types match expected formats
-
 ### Credential Handling
 
-Credentials are stored encrypted and injected at runtime:
+Credentials are stored encrypted and injected at runtime by `VaultMiddleware`:
 
 ```json
 {
@@ -491,6 +647,30 @@ Credentials are stored encrypted and injected at runtime:
 ```
 
 The executor resolves `credentialRef` to actual values without exposing them to the agent.
+
+---
+
+## Validation
+
+All workflows are validated before execution. The validator supports both JSONL and compact formats.
+
+### Validation Steps
+
+1. **Structural Validation**: Each operation must have a unique `id` and exactly one operation type
+2. **Operation Type Validation**: Operation types are checked against the executor's registered `OPERATION_HANDLERS` — unknown types are rejected
+3. **Dependency Validation**: All `inputPath` references must point to existing operations
+4. **Data Type Validation**: Operations that require arrays (e.g. `FilterData`) are checked for compatible input types
+5. **API Compatibility**: URLs are validated against the API knowledge base (if configured)
+6. **Credential Validation**: Credential references are verified against the vault (if configured)
+7. **Pattern Detection**: Common problematic patterns (e.g. unbounded loops, empty inputs) are flagged
+
+### Validation Levels
+
+| Level | Behavior |
+|-------|----------|
+| `STRICT` | Includes warnings as errors |
+| `MODERATE` (default) | Only hard errors |
+| `LENIENT` | Only errors with "will fail" certainty |
 
 ---
 
@@ -614,6 +794,36 @@ Cache keys are generated from:
 - Manual: `invalidate()` method
 - On write operations: Related caches invalidated
 
+Cache behavior is implemented via `CacheMiddleware` (see [Middleware Architecture](#middleware-architecture)).
+
+---
+
+## RAG Integration
+
+The RAG system provides semantic search for operations, APIs, endpoints, and knowledge bases. It uses **minimemory** as the vector storage and search backend.
+
+### Configuration
+
+| Environment Variable | Description |
+|---------------------|-------------|
+| `MINIMEMORY_URL` | URL of the minimemory service |
+| `MINIMEMORY_API_KEY` | API key for authentication |
+| `MINIMEMORY_NAMESPACE` | Namespace for data isolation (default: `a2e`) |
+
+### Usage
+
+```python
+from rag_integration import A2ERAGSystem
+
+rag = A2ERAGSystem(
+    base_url="https://minimemory.example.com",
+    api_key="your-api-key",
+    namespace="a2e"
+)
+```
+
+The RAG system indexes operations from the catalog and API definitions, enabling agents to discover relevant operations via natural language queries.
+
 ---
 
 ## API Reference
@@ -660,12 +870,12 @@ Authorization: Bearer <api-key>
 
 #### POST /api/v1/workflows/validate
 
-Validate a workflow before execution.
+Validate a workflow before execution. Accepts both JSONL and compact JSON formats.
 
 **Request**:
 ```json
 {
-  "workflow": "{\"type\":\"operationUpdate\",...}\n{...}"
+  "workflow": "<JSONL string or compact JSON string>"
 }
 ```
 
@@ -680,12 +890,12 @@ Validate a workflow before execution.
 
 #### POST /api/v1/workflows/execute
 
-Execute a workflow.
+Execute a workflow. Accepts both JSONL and compact JSON formats.
 
 **Request**:
 ```json
 {
-  "workflow": "{\"type\":\"operationUpdate\",...}\n{...}"
+  "workflow": "<JSONL string or compact JSON string>"
 }
 ```
 
@@ -744,32 +954,88 @@ Get rate limit status for authenticated agent.
 
 ## Examples
 
-### Example 1: Simple API Call
+### Example 1: Simple API Call (compact)
 
-```jsonl
-{"type":"operationUpdate","operationId":"fetch-data","operation":{"ApiCall":{"method":"GET","url":"https://api.example.com/data","outputPath":"/workflow/data"}}}
-{"type":"beginExecution","executionId":"exec-1","operationOrder":["fetch-data"]}
+```json
+{
+  "operations": [
+    {"id": "fetch-data", "op": "ApiCall", "method": "GET", "url": "https://api.example.com/data"}
+  ],
+  "execute": "fetch-data"
+}
 ```
 
-### Example 2: API Call + Filter
+### Example 2: API Call + Filter + Transform (compact with implicit piping)
 
-```jsonl
-{"type":"operationUpdate","operationId":"fetch-users","operation":{"ApiCall":{"method":"GET","url":"https://api.example.com/users","outputPath":"/workflow/users"}}}
-{"type":"operationUpdate","operationId":"filter-active","operation":{"FilterData":{"inputPath":"/workflow/users","conditions":[{"field":"status","operator":"==","value":"active"}],"outputPath":"/workflow/active-users"}}}
-{"type":"beginExecution","executionId":"exec-2","operationOrder":["fetch-users","filter-active"]}
+```json
+{
+  "operations": [
+    {"id": "fetch-users", "op": "ApiCall", "method": "GET", "url": "https://api.example.com/users"},
+    {"id": "filter-active", "op": "FilterData", "conditions": [{"field": "status", "operator": "==", "value": "active"}]},
+    {"id": "sort-by-name", "op": "TransformData", "transform": "sort", "field": "name"}
+  ],
+  "execute": "fetch-users"
+}
 ```
 
-### Example 3: Conditional Execution
+`filter-active` implicitly receives `/workflow/fetch-users`, and `sort-by-name` implicitly receives `/workflow/filter-active`.
 
-```jsonl
-{"type":"operationUpdate","operationId":"check-count","operation":{"ApiCall":{"method":"GET","url":"https://api.example.com/count","outputPath":"/workflow/count"}}}
-{"type":"operationUpdate","operationId":"process-if-needed","operation":{"Conditional":{"condition":{"path":"/workflow/count","operator":">","value":0},"ifTrue":["process-data"],"ifFalse":["skip"]}}}
-{"type":"beginExecution","executionId":"exec-3","operationOrder":["check-count","process-if-needed"]}
+### Example 3: Parallel operations with SetData
+
+```json
+{
+  "operations": [
+    {"id": "set-config", "op": "SetData", "value": {"threshold": 100}},
+    {"id": "fetch-a", "op": "ApiCall", "method": "GET", "url": "https://api.example.com/a"},
+    {"id": "fetch-b", "op": "ApiCall", "method": "GET", "url": "https://api.example.com/b"},
+    {"id": "merge", "op": "MergeData", "sources": ["/workflow/fetch-a", "/workflow/fetch-b"], "strategy": "concat"}
+  ],
+  "execute": "set-config"
+}
+```
+
+`set-config`, `fetch-a`, and `fetch-b` have no inter-dependencies, so they execute in parallel. `merge` waits for both fetches to complete.
+
+### Example 4: onError fallback
+
+```json
+{
+  "operations": [
+    {"id": "fetch-live", "op": "ApiCall", "method": "GET", "url": "https://api.example.com/data", "onError": "fallback"},
+    {"id": "fallback", "op": "SetData", "value": []},
+    {"id": "process", "op": "FilterData", "input": "fetch-live", "conditions": [{"field": "active", "operator": "==", "value": true}]}
+  ],
+  "execute": "fetch-live"
+}
+```
+
+If `fetch-live` fails, `fallback` provides an empty array to `/workflow/fetch-live`, and `process` continues normally.
+
+### Example 5: DateTime operations
+
+```json
+{
+  "operations": [
+    {"id": "now", "op": "DateTime", "mode": "now", "timezone": "UTC"},
+    {"id": "next-week", "op": "DateTime", "mode": "calculate", "input": "/workflow/now", "operation": "add", "amount": 7, "unit": "days"}
+  ],
+  "execute": "now"
+}
 ```
 
 ---
 
 ## Version History
+
+- **2.0.0** (2026-04-04): Major update
+  - Compact JSON workflow format as alternative to JSONL
+  - DAG-based parallel execution with topological scheduling
+  - `onError` fallback mechanism for operation-level error recovery
+  - Middleware architecture (AuditMiddleware, CacheMiddleware, VaultMiddleware)
+  - 10 new operations: Calculate, EncodeDecode, ExtractText, FormatText, ValidateData, DateTime, SetData, GetCurrentDateTime, ConvertTimezone, DateCalculation
+  - Unified `DateTime` operation (deprecates GetCurrentDateTime, ConvertTimezone, DateCalculation)
+  - Validation now checks operation types against executor's registered handlers
+  - RAG system backed by minimemory
 
 - **1.0.0** (2025-12-17): Initial stable release
   - Core operations: ApiCall, FilterData, TransformData, Conditional, Loop, StoreData, Wait, MergeData
@@ -786,9 +1052,9 @@ Get rate limit status for authenticated agent.
 - **MCP Protocol**: Model Context Protocol reference
 - **JSON Lines**: JSONL format specification
 - **JSON Schema**: Schema validation standard
+- **minimemory**: Vector storage backend for RAG
 
 ---
 
-**A2E Protocol Specification v1.0.0**  
-Copyright © 2025 A2E Contributors
-
+**A2E Protocol Specification v2.0.0**
+Copyright (c) 2025-2026 A2E Contributors

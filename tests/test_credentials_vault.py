@@ -2,6 +2,7 @@
 Tests para Credentials Vault
 """
 
+import json
 import pytest
 import tempfile
 import os
@@ -11,9 +12,10 @@ from credentials_vault import CredentialsVault, CredentialInjector
 @pytest.fixture
 def vault():
     """Fixture para crear un vault limpio"""
-    with tempfile.NamedTemporaryFile(delete=False, suffix='.json') as f:
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.json', mode='w') as f:
+        json.dump({"credentials": {}}, f)
         vault_path = f.name
-    
+
     yield CredentialsVault(vault_path=vault_path)
     
     # Cleanup

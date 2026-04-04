@@ -1,87 +1,58 @@
 """
-Integración de RAG con LokiJS y embeddings locales para A2E
+Integración de RAG con minimemory para A2E
 Proporciona búsqueda semántica para operaciones, APIs, endpoints y knowledge bases
+Reemplaza la dependencia de rag_catalog (LokiDatabase + VectorIndex) con minimemory SDK
 """
 
+import asyncio
 import json
 import logging
-import sys
 import os
+import re
 from typing import Dict, Any, List, Optional
-from pathlib import Path
 
-# Agregar path de rag_catalog al sys.path
-_current_file = Path(__file__).resolve()
-_current_dir = _current_file.parent
-# workflow_executor -> adk -> rag_catalog
-rag_catalog_path = _current_dir.parent / "rag_catalog"
-rag_catalog_path = rag_catalog_path.resolve()
+logger = logging.getLogger(__name__)
 
-if str(rag_catalog_path) not in sys.path and rag_catalog_path.exists():
-    sys.path.insert(0, str(rag_catalog_path))
+# Intentar importar minimemory
+MiniMemoryClient = None
+SearchMode = None
+MemoryType = None
 
-# Intentar múltiples formas de importación
-LokiDatabase = None
-VectorIndex = None
-
-# Método 1: Importación directa desde el path agregado
 try:
-    from loki_db import LokiDatabase
-    from vector_index import VectorIndex
+    from minimemory import MiniMemoryClient, SearchMode, MemoryType
 except ImportError:
     pass
 
-# Método 2: Importación relativa
-if LokiDatabase is None:
-    try:
-        import importlib.util
-        loki_db_path = rag_catalog_path / "loki_db.py"
-        vector_index_path = rag_catalog_path / "vector_index.py"
-        
-        if loki_db_path.exists():
-            spec = importlib.util.spec_from_file_location("loki_db", loki_db_path)
-            loki_db_module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(loki_db_module)
-            LokiDatabase = loki_db_module.LokiDatabase
-        
-        if vector_index_path.exists():
-            spec = importlib.util.spec_from_file_location("vector_index", vector_index_path)
-            vector_index_module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(vector_index_module)
-            VectorIndex = vector_index_module.VectorIndex
-    except Exception:
-        pass
-
-# Método 3: Intentar como paquete instalado
-if LokiDatabase is None or VectorIndex is None:
-    try:
-        from rag_catalog.loki_db import LokiDatabase
-        from rag_catalog.vector_index import VectorIndex
-    except ImportError:
-        pass
-
-# Configurar logger primero
-logger = logging.getLogger(__name__)
-
-# Verificar que ambas clases están disponibles
-if LokiDatabase is None or VectorIndex is None:
-    # No lanzar error inmediatamente, permitir uso sin RAG
+if MiniMemoryClient is None:
     logger.warning(
-        f"Could not import rag_catalog components. "
-        f"Tried path: {rag_catalog_path} "
-        f"Path exists: {rag_catalog_path.exists()}. "
-        f"RAG features will be disabled. "
-        f"To enable: install a2ui-rag-catalog or add rag_catalog to PYTHONPATH."
+        "Could not import minimemory SDK. "
+        "RAG features will be disabled. "
+        "To enable: pip install minimemory"
     )
-    # Las clases se definirán como None, y el código verificará antes de usar
+
+
+def _run_async(coro):
+    """Bridge async→sync: run a coroutine from synchronous code."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        # Already inside an async context — create a new thread to avoid deadlock
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(asyncio.run, coro).result()
+    else:
+        return asyncio.run(coro)
 
 
 class A2ERAGSystem:
     """
     Sistema RAG unificado para A2E
-    Usa LokiJS para almacenamiento y embeddings locales para búsqueda semántica
+    Usa minimemory como backend para almacenamiento vectorial y búsqueda semántica
     """
-    
+
     def __init__(
         self,
         db_path: Optional[str] = None,
@@ -90,240 +61,258 @@ class A2ERAGSystem:
         max_elements: int = 50000,
         ef_construction: int = 200,
         M: int = 16,
-        ef_search: int = 50
+        ef_search: int = 50,
+        base_url: Optional[str] = None,
+        api_key: Optional[str] = None,
+        namespace: Optional[str] = None,
     ):
         """
         Inicializa el sistema RAG
-        
+
         Args:
-            db_path: Ruta para persistir la base de datos (opcional)
-            embedding_model: Modelo de embeddings a usar
-            use_hnsw: Si usar HNSW para búsqueda vectorial (más eficiente)
-            max_elements: Número máximo de elementos para HNSW
-            ef_construction: Parámetro de construcción HNSW
-            M: Número de conexiones bidireccionales HNSW
-            ef_search: Parámetro de búsqueda HNSW
-        
+            db_path: (legacy, ignorado) Ruta para persistir la base de datos
+            embedding_model: (legacy, ignorado) Modelo de embeddings — minimemory genera los suyos
+            use_hnsw: (legacy, ignorado) HNSW está integrado en minimemory
+            max_elements: (legacy, ignorado)
+            ef_construction: (legacy, ignorado)
+            M: (legacy, ignorado)
+            ef_search: (legacy, ignorado)
+            base_url: URL del servicio minimemory (o env MINIMEMORY_URL)
+            api_key: API key (o env MINIMEMORY_API_KEY)
+            namespace: Namespace (o env MINIMEMORY_NAMESPACE, default "a2e")
+
         Raises:
-            ImportError: Si rag_catalog no está disponible
+            ImportError: Si minimemory no está disponible
         """
-        if LokiDatabase is None or VectorIndex is None:
+        if MiniMemoryClient is None:
             raise ImportError(
                 "RAG components not available. "
-                "Install a2ui-rag-catalog or add rag_catalog to PYTHONPATH."
+                "Install minimemory: pip install minimemory"
             )
-        
-        # Base de datos LokiJS
-        self.db = LokiDatabase("a2e_rag_db")
-        
-        # Índice vectorial con embeddings locales (HNSW si está disponible)
-        self.vector_index = VectorIndex(
-            model_name=embedding_model,
-            use_hnsw=use_hnsw,
-            max_elements=max_elements,
-            ef_construction=ef_construction,
-            M=M,
-            ef_search=ef_search
+
+        self._base_url = base_url or os.environ.get("MINIMEMORY_URL", "")
+        self._api_key = api_key or os.environ.get("MINIMEMORY_API_KEY", "")
+        self._namespace = namespace or os.environ.get("MINIMEMORY_NAMESPACE", "a2e")
+
+        if not self._base_url or not self._api_key:
+            raise ImportError(
+                "RAG components not configured. "
+                "Set MINIMEMORY_URL and MINIMEMORY_API_KEY environment variables, "
+                "or pass base_url and api_key to A2ERAGSystem()."
+            )
+
+        self._client = MiniMemoryClient(
+            base_url=self._base_url,
+            api_key=self._api_key,
+            namespace=self._namespace,
         )
-        
-        # Colecciones
-        self.operations_collection = self.db.add_collection(
-            "operations",
-            unique_index="id"
+
+        # In-memory index for fast filtering by collection type
+        # Maps collection_type → [{ id, metadata, content }]
+        self._local_index: Dict[str, List[Dict[str, Any]]] = {
+            "operations": [],
+            "apis": [],
+            "endpoints": [],
+            "knowledge": [],
+            "sql_queries": [],
+        }
+
+        logger.info(
+            f"A2E RAG System initialized with minimemory "
+            f"(url={self._base_url}, namespace={self._namespace})"
         )
-        self.apis_collection = self.db.add_collection(
-            "apis",
-            unique_index="id"
+
+    async def _remember(self, content: str, metadata: Dict[str, Any]) -> str:
+        """Store a memory and return its ID."""
+        memory, _, _ = await self._client.remember(
+            content,
+            type=MemoryType.KNOWLEDGE,
+            importance=0.7,
+            metadata=metadata,
+            generate_embedding=True,
         )
-        self.endpoints_collection = self.db.add_collection(
-            "endpoints",
-            unique_index=None
+        return memory.id
+
+    async def _recall(
+        self,
+        query: str,
+        top_k: int = 10,
+        mode: str = "hybrid",
+    ) -> List[Dict[str, Any]]:
+        """Search memories and return results as dicts."""
+        search_mode = {
+            "hybrid": SearchMode.HYBRID,
+            "vector": SearchMode.VECTOR,
+            "keyword": SearchMode.KEYWORD,
+        }.get(mode, SearchMode.HYBRID)
+
+        results, _ = await self._client.recall(
+            query,
+            limit=top_k,
+            mode=search_mode,
+            type=MemoryType.KNOWLEDGE,
         )
-        self.knowledge_collection = self.db.add_collection(
-            "knowledge",
-            unique_index="id"
-        )
-        self.sql_queries_collection = self.db.add_collection(
-            "sql_queries",
-            unique_index="id"
-        )
-        
-        # Índices adicionales
-        self.operations_collection.ensure_index("category")
-        self.apis_collection.ensure_index("baseUrl")
-        self.endpoints_collection.ensure_index("apiId")
-        self.endpoints_collection.ensure_index("method")
-        self.knowledge_collection.ensure_index("type")
-        self.sql_queries_collection.ensure_index("database")
-        self.sql_queries_collection.ensure_index("category")
-        
-        logger.info(f"A2E RAG System initialized with model: {embedding_model}")
-    
+        return [
+            {
+                "id": r.id,
+                "content": r.content,
+                "score": r.score,
+                "metadata": r.metadata or {},
+            }
+            for r in results
+        ]
+
+    # ============ Indexing Methods ============
+
     def index_operations_catalog(self, catalog_path: str):
         """
         Indexa el catálogo de operaciones en RAG
-        
+
         Args:
             catalog_path: Ruta al archivo workflow_catalog.json
         """
         logger.info(f"Indexing operations catalog: {catalog_path}")
-        
+
         with open(catalog_path, "r", encoding="utf-8") as f:
             catalog = json.load(f)
-        
+
         operations = catalog.get("operations", {})
-        
-        for op_name, op_schema in operations.items():
-            # Crear documento para la operación
-            description = op_schema.get("description", "")
-            properties = op_schema.get("properties", {})
-            
-            # Texto para embedding
-            text = f"{op_name}: {description}"
-            if properties:
-                prop_names = ", ".join(properties.keys())
-                text += f" Properties: {prop_names}"
-            
-            # Generar embedding
-            embedding = self.vector_index.model.encode(text)
-            vector_id = self.vector_index.add(text, {
-                "type": "operation",
-                "name": op_name,
-                "description": description,
-                "schema": op_schema
-            }, embedding)
-            
-            # Guardar en LokiJS
-            self.operations_collection.insert({
-                "id": op_name,
-                "name": op_name,
-                "description": description,
-                "schema": op_schema,
-                "vector_id": vector_id,
-                "category": self._categorize_operation(op_name)
-            })
-        
+
+        async def _index_all():
+            for op_name, op_schema in operations.items():
+                description = op_schema.get("description", "")
+                properties = op_schema.get("properties", {})
+
+                # Build search text
+                text = f"{op_name}: {description}"
+                if properties:
+                    prop_names = ", ".join(properties.keys())
+                    text += f" Properties: {prop_names}"
+
+                metadata = {
+                    "_collection": "operations",
+                    "type": "operation",
+                    "name": op_name,
+                    "description": description,
+                    "schema": op_schema,
+                    "category": self._categorize_operation(op_name),
+                }
+
+                mem_id = await self._remember(text, metadata)
+
+                self._local_index["operations"].append({
+                    "id": mem_id,
+                    "name": op_name,
+                    "description": description,
+                    "schema": op_schema,
+                    "category": metadata["category"],
+                })
+
+        _run_async(_index_all())
         logger.info(f"Indexed {len(operations)} operations")
-    
+
     def index_api(self, api_id: str, api_info: Dict[str, Any]):
-        """
-        Indexa una API en RAG
-        
-        Args:
-            api_id: ID de la API
-            api_info: Información de la API
-        """
+        """Indexa una API en RAG"""
         base_url = api_info.get("baseUrl", "")
-        description = f"API {api_id} at {base_url}"
-        
-        # Generar embedding para la API
-        text = f"{api_id} API: {description}"
-        embedding = self.vector_index.model.encode(text)
-        vector_id = self.vector_index.add(text, {
+        text = f"{api_id} API at {base_url}"
+
+        metadata = {
+            "_collection": "apis",
             "type": "api",
-            "id": api_id,
-            "info": api_info
-        }, embedding)
-        
-        # Guardar en LokiJS
-        self.apis_collection.insert({
             "id": api_id,
             "baseUrl": base_url,
             "info": api_info,
-            "vector_id": vector_id
+        }
+
+        mem_id = _run_async(self._remember(text, metadata))
+
+        self._local_index["apis"].append({
+            "id": mem_id,
+            "api_id": api_id,
+            "baseUrl": base_url,
+            "info": api_info,
         })
-        
+
         logger.info(f"Indexed API: {api_id}")
-    
+
     def index_endpoint(
         self,
         api_id: str,
         endpoint: Dict[str, Any],
-        base_url: str
+        base_url: str,
     ):
-        """
-        Indexa un endpoint en RAG
-        
-        Args:
-            api_id: ID de la API
-            endpoint: Información del endpoint
-            base_url: URL base de la API
-        """
+        """Indexa un endpoint en RAG"""
         path = endpoint.get("path", "")
         method = endpoint.get("method", "GET")
         description = endpoint.get("description", "")
-        
-        # Texto para embedding
+
         text = f"{method} {path}: {description}"
         if endpoint.get("parameters"):
-            params = ", ".join([p.get("name", "") for p in endpoint.get("parameters", [])])
+            params = ", ".join(
+                [p.get("name", "") for p in endpoint.get("parameters", [])]
+            )
             text += f" Parameters: {params}"
-        
-        # Generar embedding
-        embedding = self.vector_index.model.encode(text)
-        vector_id = self.vector_index.add(text, {
+
+        metadata = {
+            "_collection": "endpoints",
             "type": "endpoint",
-            "apiId": api_id,
-            "endpoint": endpoint,
-            "baseUrl": base_url
-        }, embedding)
-        
-        # Guardar en LokiJS
-        self.endpoints_collection.insert({
             "apiId": api_id,
             "path": path,
             "method": method,
             "description": description,
             "endpoint": endpoint,
             "baseUrl": base_url,
-            "vector_id": vector_id
+        }
+
+        mem_id = _run_async(self._remember(text, metadata))
+
+        self._local_index["endpoints"].append({
+            "id": mem_id,
+            "apiId": api_id,
+            "path": path,
+            "method": method,
+            "description": description,
+            "endpoint": endpoint,
+            "baseUrl": base_url,
         })
-        
+
         logger.debug(f"Indexed endpoint: {method} {path}")
-    
+
     def index_knowledge(
         self,
         knowledge_id: str,
         knowledge_type: str,
         content: Dict[str, Any],
-        description: str = ""
+        description: str = "",
     ):
-        """
-        Indexa conocimiento general en RAG
-        
-        Args:
-            knowledge_id: ID único del conocimiento
-            knowledge_type: Tipo de conocimiento (ej: "documentation", "example")
-            content: Contenido del conocimiento
-            description: Descripción del conocimiento
-        """
+        """Indexa conocimiento general en RAG"""
         text = f"{knowledge_type}: {description}"
         if isinstance(content, dict):
-            # Agregar campos relevantes al texto
             for key, value in content.items():
                 if isinstance(value, str) and len(value) < 200:
                     text += f" {key}: {value}"
-        
-        # Generar embedding
-        embedding = self.vector_index.model.encode(text)
-        vector_id = self.vector_index.add(text, {
+
+        metadata = {
+            "_collection": "knowledge",
             "type": "knowledge",
             "id": knowledge_id,
             "knowledgeType": knowledge_type,
-            "content": content
-        }, embedding)
-        
-        # Guardar en LokiJS
-        self.knowledge_collection.insert({
-            "id": knowledge_id,
+            "description": description,
+            "content": content,
+        }
+
+        mem_id = _run_async(self._remember(text, metadata))
+
+        self._local_index["knowledge"].append({
+            "id": mem_id,
+            "knowledge_id": knowledge_id,
             "type": knowledge_type,
             "description": description,
             "content": content,
-            "vector_id": vector_id
         })
-        
+
         logger.info(f"Indexed knowledge: {knowledge_id}")
-    
+
     def index_sql_query(
         self,
         query_id: str,
@@ -332,21 +321,9 @@ class A2ERAGSystem:
         database: Optional[str] = None,
         category: Optional[str] = None,
         parameters: Optional[List[str]] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
     ):
-        """
-        Indexa una consulta SQL en RAG
-        
-        Args:
-            query_id: ID único de la consulta
-            sql_query: La consulta SQL completa
-            description: Descripción de qué hace la consulta
-            database: Nombre de la base de datos (opcional)
-            category: Categoría de la consulta (ej: "select", "insert", "update", "analytics")
-            parameters: Lista de parámetros que acepta la consulta (opcional)
-            metadata: Metadatos adicionales (opcional)
-        """
-        # Texto para embedding: descripción + query + parámetros
+        """Indexa una consulta SQL en RAG"""
         text = f"SQL Query: {description}"
         if database:
             text += f" Database: {database}"
@@ -354,351 +331,258 @@ class A2ERAGSystem:
             text += f" Category: {category}"
         if parameters:
             text += f" Parameters: {', '.join(parameters)}"
-        # Incluir partes clave de la query (sin incluir toda la query para evitar ruido)
-        # Extraer palabras clave de la query
+
         query_keywords = self._extract_sql_keywords(sql_query)
         if query_keywords:
             text += f" Keywords: {', '.join(query_keywords)}"
-        
-        # Generar embedding
-        embedding = self.vector_index.model.encode(text)
-        vector_id = self.vector_index.add(text, {
+
+        mem_metadata = {
+            "_collection": "sql_queries",
             "type": "sql_query",
             "id": query_id,
-            "database": database,
-            "category": category,
-            "description": description
-        }, embedding)
-        
-        # Guardar en LokiJS
-        query_doc = {
-            "id": query_id,
+            "database": database or "default",
+            "category": category or "general",
+            "description": description,
+        }
+
+        mem_id = _run_async(self._remember(text, mem_metadata))
+
+        doc = {
+            "id": mem_id,
+            "query_id": query_id,
             "sql": sql_query,
             "description": description,
             "database": database or "default",
             "category": category or "general",
             "parameters": parameters or [],
-            "vector_id": vector_id
         }
-        
         if metadata:
-            query_doc["metadata"] = metadata
-        
-        self.sql_queries_collection.insert(query_doc)
-        
+            doc["metadata"] = metadata
+
+        self._local_index["sql_queries"].append(doc)
+
         logger.info(f"Indexed SQL query: {query_id}")
-    
-    def _extract_sql_keywords(self, sql_query: str) -> List[str]:
-        """Extrae palabras clave de una consulta SQL"""
-        keywords = []
-        sql_lower = sql_query.lower()
-        
-        # Palabras clave SQL comunes
-        sql_keywords = [
-            "select", "from", "where", "join", "inner", "left", "right", "outer",
-            "group by", "order by", "having", "limit", "offset",
-            "insert", "update", "delete", "create", "alter", "drop",
-            "count", "sum", "avg", "max", "min", "distinct",
-            "union", "intersect", "except"
-        ]
-        
-        for keyword in sql_keywords:
-            if keyword in sql_lower:
-                keywords.append(keyword)
-        
-        # Extraer nombres de tablas (después de FROM, JOIN, etc.)
-        import re
-        table_patterns = [
-            r'from\s+(\w+)',
-            r'join\s+(\w+)',
-            r'into\s+(\w+)',
-            r'update\s+(\w+)'
-        ]
-        
-        for pattern in table_patterns:
-            matches = re.findall(pattern, sql_lower)
-            keywords.extend(matches)
-        
-        return list(set(keywords))  # Eliminar duplicados
-    
+
+    # ============ Search Methods ============
+
     def search_operations(
         self,
         query: str,
-        top_k: int = 5
+        top_k: int = 5,
     ) -> List[Dict[str, Any]]:
-        """
-        Busca operaciones relevantes usando búsqueda semántica
-        
-        Args:
-            query: Query de búsqueda
-            top_k: Número de resultados a retornar
-        
-        Returns:
-            Lista de operaciones relevantes
-        """
-        # Búsqueda semántica en el índice vectorial
-        results = self.vector_index.search(query, top_k=top_k * 2)  # Buscar más para filtrar
-        
+        """Busca operaciones relevantes usando búsqueda semántica"""
+        results = _run_async(self._recall(query, top_k=top_k * 2))
+
         operations = []
         seen = set()
-        
+
         for result in results:
-            metadata = result["metadata"]
-            if metadata.get("type") == "operation":
-                op_name = metadata.get("name")
+            meta = result["metadata"]
+            if meta.get("_collection") == "operations" or meta.get("type") == "operation":
+                op_name = meta.get("name")
                 if op_name and op_name not in seen:
-                    # Obtener de LokiJS
-                    op_doc = self.operations_collection.find_one({"id": op_name})
-                    if op_doc:
-                        operations.append({
-                            "name": op_name,
-                            "description": op_doc.get("description", ""),
-                            "schema": op_doc.get("schema", {}),
-                            "score": result["score"]
-                        })
-                        seen.add(op_name)
-                        if len(operations) >= top_k:
-                            break
-        
+                    operations.append({
+                        "name": op_name,
+                        "description": meta.get("description", ""),
+                        "schema": meta.get("schema", {}),
+                        "score": result["score"],
+                    })
+                    seen.add(op_name)
+                    if len(operations) >= top_k:
+                        break
+
+        # Fallback: also check local index if remote returned few results
+        if len(operations) < top_k:
+            query_lower = query.lower()
+            for doc in self._local_index["operations"]:
+                name = doc.get("name", "")
+                if name not in seen and query_lower in (
+                    name.lower() + " " + doc.get("description", "").lower()
+                ):
+                    operations.append({
+                        "name": name,
+                        "description": doc.get("description", ""),
+                        "schema": doc.get("schema", {}),
+                        "score": 0.5,
+                    })
+                    seen.add(name)
+                    if len(operations) >= top_k:
+                        break
+
         return operations
-    
+
     def search_apis(
         self,
         query: str,
-        top_k: int = 5
+        top_k: int = 5,
     ) -> List[Dict[str, Any]]:
-        """
-        Busca APIs relevantes usando búsqueda semántica
-        
-        Args:
-            query: Query de búsqueda
-            top_k: Número de resultados a retornar
-        
-        Returns:
-            Lista de APIs relevantes
-        """
-        results = self.vector_index.search(query, top_k=top_k * 2)
-        
+        """Busca APIs relevantes usando búsqueda semántica"""
+        results = _run_async(self._recall(query, top_k=top_k * 2))
+
         apis = []
         seen = set()
-        
+
         for result in results:
-            metadata = result["metadata"]
-            if metadata.get("type") == "api":
-                api_id = metadata.get("id")
+            meta = result["metadata"]
+            if meta.get("_collection") == "apis" or meta.get("type") == "api":
+                api_id = meta.get("id")
                 if api_id and api_id not in seen:
-                    api_doc = self.apis_collection.find_one({"id": api_id})
-                    if api_doc:
-                        apis.append({
-                            "id": api_id,
-                            "baseUrl": api_doc.get("baseUrl", ""),
-                            "info": api_doc.get("info", {}),
-                            "score": result["score"]
-                        })
-                        seen.add(api_id)
-                        if len(apis) >= top_k:
-                            break
-        
+                    apis.append({
+                        "id": api_id,
+                        "baseUrl": meta.get("baseUrl", ""),
+                        "info": meta.get("info", {}),
+                        "score": result["score"],
+                    })
+                    seen.add(api_id)
+                    if len(apis) >= top_k:
+                        break
+
         return apis
-    
+
     def search_endpoints(
         self,
         query: str,
         api_id: Optional[str] = None,
-        top_k: int = 5
+        top_k: int = 5,
     ) -> List[Dict[str, Any]]:
-        """
-        Busca endpoints relevantes usando búsqueda semántica
-        
-        Args:
-            query: Query de búsqueda
-            api_id: Filtrar por API (opcional)
-            top_k: Número de resultados a retornar
-        
-        Returns:
-            Lista de endpoints relevantes
-        """
-        results = self.vector_index.search(query, top_k=top_k * 3)
-        
+        """Busca endpoints relevantes usando búsqueda semántica"""
+        results = _run_async(self._recall(query, top_k=top_k * 3))
+
         endpoints = []
         seen = set()
-        
+
         for result in results:
-            metadata = result["metadata"]
-            if metadata.get("type") == "endpoint":
-                endpoint_info = metadata.get("endpoint", {})
-                path = endpoint_info.get("path", "")
-                method = endpoint_info.get("method", "")
-                key = f"{metadata.get('apiId')}:{method}:{path}"
-                
+            meta = result["metadata"]
+            if meta.get("_collection") == "endpoints" or meta.get("type") == "endpoint":
+                path = meta.get("path", "")
+                method = meta.get("method", "")
+                key = f"{meta.get('apiId')}:{method}:{path}"
+
                 if key not in seen:
-                    # Filtrar por API si se especifica
-                    if api_id and metadata.get("apiId") != api_id:
+                    if api_id and meta.get("apiId") != api_id:
                         continue
-                    
+
                     endpoints.append({
-                        "apiId": metadata.get("apiId"),
-                        "baseUrl": metadata.get("baseUrl", ""),
+                        "apiId": meta.get("apiId"),
+                        "baseUrl": meta.get("baseUrl", ""),
                         "path": path,
                         "method": method,
-                        "description": endpoint_info.get("description", ""),
-                        "endpoint": endpoint_info,
-                        "score": result["score"]
+                        "description": meta.get("description", ""),
+                        "endpoint": meta.get("endpoint", {}),
+                        "score": result["score"],
                     })
                     seen.add(key)
                     if len(endpoints) >= top_k:
                         break
-        
+
         return endpoints
-    
+
     def search_knowledge(
         self,
         query: str,
         knowledge_type: Optional[str] = None,
-        top_k: int = 5
+        top_k: int = 5,
     ) -> List[Dict[str, Any]]:
-        """
-        Busca conocimiento relevante usando búsqueda semántica
-        
-        Args:
-            query: Query de búsqueda
-            knowledge_type: Filtrar por tipo (opcional)
-            top_k: Número de resultados a retornar
-        
-        Returns:
-            Lista de conocimiento relevante
-        """
-        results = self.vector_index.search(query, top_k=top_k * 2)
-        
+        """Busca conocimiento relevante usando búsqueda semántica"""
+        results = _run_async(self._recall(query, top_k=top_k * 2))
+
         knowledge = []
         seen = set()
-        
+
         for result in results:
-            # result es una tupla (metadata, score)
-            if isinstance(result, tuple):
-                metadata, score = result
-            else:
-                # Compatibilidad con formato dict (HNSW)
-                metadata = result.get("metadata", result)
-                score = result.get("score", 0.0)
-            
-            if metadata.get("type") == "knowledge":
-                knowledge_id = metadata.get("id")
-                
+            meta = result["metadata"]
+            if meta.get("_collection") == "knowledge" or meta.get("type") == "knowledge":
+                knowledge_id = meta.get("id")
+
                 if knowledge_id and knowledge_id not in seen:
-                    # Filtrar por tipo si se especifica
-                    if knowledge_type and metadata.get("knowledgeType") != knowledge_type:
+                    if knowledge_type and meta.get("knowledgeType") != knowledge_type:
                         continue
-                    
-                    knowledge_doc = self.knowledge_collection.find_one({"id": knowledge_id})
-                    if knowledge_doc:
-                        knowledge.append({
-                            "id": knowledge_id,
-                            "type": knowledge_doc.get("type", ""),
-                            "description": knowledge_doc.get("description", ""),
-                            "content": knowledge_doc.get("content", {}),
-                            "score": float(score)
-                        })
-                        seen.add(knowledge_id)
-                        if len(knowledge) >= top_k:
-                            break
-        
+
+                    knowledge.append({
+                        "id": knowledge_id,
+                        "type": meta.get("knowledgeType", ""),
+                        "description": meta.get("description", ""),
+                        "content": meta.get("content", {}),
+                        "score": result["score"],
+                    })
+                    seen.add(knowledge_id)
+                    if len(knowledge) >= top_k:
+                        break
+
         return knowledge
-    
+
     def search_sql_queries(
         self,
         query: str,
         database: Optional[str] = None,
         category: Optional[str] = None,
-        top_k: int = 5
+        top_k: int = 5,
     ) -> List[Dict[str, Any]]:
-        """
-        Busca consultas SQL relevantes usando búsqueda semántica
-        
-        Args:
-            query: Query de búsqueda (ej: "obtener usuarios activos")
-            database: Filtrar por base de datos (opcional)
-            category: Filtrar por categoría (opcional)
-            top_k: Número de resultados a retornar
-        
-        Returns:
-            Lista de consultas SQL relevantes
-        """
-        results = self.vector_index.search(query, top_k=top_k * 2)
-        
+        """Busca consultas SQL relevantes usando búsqueda semántica"""
+        results = _run_async(self._recall(query, top_k=top_k * 2))
+
         sql_queries = []
         seen = set()
-        
+
         for result in results:
-            # result es una tupla (metadata, score)
-            if isinstance(result, tuple):
-                metadata, score = result
-            else:
-                # Compatibilidad con formato dict (HNSW)
-                metadata = result.get("metadata", result)
-                score = result.get("score", 0.0)
-            
-            if metadata.get("type") == "sql_query":
-                query_id = metadata.get("id")
-                
+            meta = result["metadata"]
+            if meta.get("_collection") == "sql_queries" or meta.get("type") == "sql_query":
+                query_id = meta.get("id")
+
                 if query_id and query_id not in seen:
-                    # Filtrar por base de datos si se especifica
-                    if database and metadata.get("database") != database:
+                    if database and meta.get("database") != database:
                         continue
-                    
-                    # Filtrar por categoría si se especifica
-                    if category and metadata.get("category") != category:
+                    if category and meta.get("category") != category:
                         continue
-                    
-                    query_doc = self.sql_queries_collection.find_one({"id": query_id})
-                    if query_doc:
-                        sql_queries.append({
-                            "id": query_id,
-                            "sql": query_doc.get("sql", ""),
-                            "description": query_doc.get("description", ""),
-                            "database": query_doc.get("database", ""),
-                            "category": query_doc.get("category", ""),
-                            "parameters": query_doc.get("parameters", []),
-                            "metadata": query_doc.get("metadata", {}),
-                            "score": float(score)
-                        })
-                        seen.add(query_id)
-                        if len(sql_queries) >= top_k:
-                            break
-        
+
+                    # Find full doc in local index
+                    local_doc = next(
+                        (d for d in self._local_index["sql_queries"]
+                         if d.get("query_id") == query_id),
+                        {},
+                    )
+
+                    sql_queries.append({
+                        "id": query_id,
+                        "sql": local_doc.get("sql", ""),
+                        "description": meta.get("description", ""),
+                        "database": meta.get("database", ""),
+                        "category": meta.get("category", ""),
+                        "parameters": local_doc.get("parameters", []),
+                        "metadata": local_doc.get("metadata", {}),
+                        "score": result["score"],
+                    })
+                    seen.add(query_id)
+                    if len(sql_queries) >= top_k:
+                        break
+
         return sql_queries
-    
+
+    # ============ Utility Methods ============
+
     def build_partial_schema(
         self,
-        operations: List[Dict[str, Any]]
+        operations: List[Dict[str, Any]],
     ) -> Dict[str, Any]:
-        """
-        Construye un schema parcial solo con las operaciones relevantes
-        
-        Args:
-            operations: Lista de operaciones relevantes
-        
-        Returns:
-            Schema parcial con solo las operaciones relevantes
-        """
+        """Construye un schema parcial solo con las operaciones relevantes"""
         schema = {
             "type": "object",
             "properties": {
                 "operations": {
                     "type": "object",
-                    "properties": {}
+                    "properties": {},
                 }
-            }
+            },
         }
-        
+
         for op in operations:
             op_name = op.get("name")
             op_schema = op.get("schema", {})
             if op_name and op_schema:
                 schema["properties"]["operations"]["properties"][op_name] = op_schema
-        
+
         return schema
-    
+
     def _categorize_operation(self, op_name: str) -> str:
         """Categoriza una operación"""
         if "Api" in op_name or "Call" in op_name:
@@ -715,14 +599,45 @@ class A2ERAGSystem:
             return "control"
         else:
             return "other"
-    
-    def save(self, path: str):
-        """Persiste la base de datos"""
-        self.db.save(path)
-        logger.info(f"Database saved to {path}")
-    
-    def load(self, path: str):
-        """Carga la base de datos"""
-        self.db.load(path)
-        logger.info(f"Database loaded from {path}")
 
+    def _extract_sql_keywords(self, sql_query: str) -> List[str]:
+        """Extrae palabras clave de una consulta SQL"""
+        keywords = []
+        sql_lower = sql_query.lower()
+
+        sql_keywords = [
+            "select", "from", "where", "join", "inner", "left", "right", "outer",
+            "group by", "order by", "having", "limit", "offset",
+            "insert", "update", "delete", "create", "alter", "drop",
+            "count", "sum", "avg", "max", "min", "distinct",
+            "union", "intersect", "except",
+        ]
+
+        for keyword in sql_keywords:
+            if keyword in sql_lower:
+                keywords.append(keyword)
+
+        table_patterns = [
+            r'from\s+(\w+)',
+            r'join\s+(\w+)',
+            r'into\s+(\w+)',
+            r'update\s+(\w+)',
+        ]
+
+        for pattern in table_patterns:
+            matches = re.findall(pattern, sql_lower)
+            keywords.extend(matches)
+
+        return list(set(keywords))
+
+    def save(self, path: str):
+        """Persiste datos (no-op: minimemory persiste automáticamente en el servidor)"""
+        logger.info(f"Data persisted by minimemory server (save path ignored: {path})")
+
+    def load(self, path: str):
+        """Carga datos (no-op: minimemory carga automáticamente del servidor)"""
+        logger.info(f"Data loaded from minimemory server (load path ignored: {path})")
+
+    def close(self):
+        """Cierra la conexión con minimemory"""
+        _run_async(self._client.close())

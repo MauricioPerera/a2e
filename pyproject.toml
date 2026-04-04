@@ -35,4 +35,19 @@ python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
 asyncio_mode = "auto"
+addopts = "--cov --cov-report=term-missing --cov-report=html:coverage_html"
+
+[tool.coverage.run]
+source = ["executor", "n8n_bridge", "vault", "auth", "server"]
+omit = ["tests/*", "*/test_*", "examples/*"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 40
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__",
+    "raise NotImplementedError",
+    "except ImportError",
+]
 

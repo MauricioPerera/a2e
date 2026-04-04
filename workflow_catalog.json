@@ -1,6 +1,12 @@
 {
   "catalogId": "workflow-operations-v1",
   "description": "Catálogo de operaciones para ejecución de workflows",
+  "commonFields": {
+    "onError": {
+      "type": "string",
+      "description": "Optional. ID of a fallback operation to execute if this operation fails. The fallback operation's result is stored under the original operation's outputPath so downstream operations receive the fallback data transparently. The fallback operation is excluded from normal execution flow and only runs when triggered by an error. The result is marked with a _fallback: true flag for audit purposes."
+    }
+  },
   "operations": {
     "ApiCall": {
       "type": "object",
@@ -67,7 +73,7 @@
           "description": "Ruta donde guardar el resultado filtrado"
         }
       },
-      "required": ["inputPath", "outputPath"]
+      "required": ["inputPath", "conditions", "outputPath"]
     },
     
     "TransformData": {
@@ -77,12 +83,12 @@
         "inputPath": {"type": "string"},
         "transform": {
           "type": "string",
-          "enum": ["map", "reduce", "sort", "groupBy", "select", "aggregate"],
+          "enum": ["map", "sort", "pick", "flatten", "group", "unique", "reverse", "slice"],
           "description": "Tipo de transformación"
         },
         "config": {
           "type": "object",
-          "description": "Configuración específica de la transformación"
+          "description": "Configuración específica según el tipo de transformación. map: {fields: string[]} - campos a extraer de cada elemento del array. sort: {field?: string, reverse?: boolean} - campo por el que ordenar y dirección. pick: {fields: string[]} - campos a seleccionar de un objeto. flatten: {} - no requiere config, aplana listas anidadas un nivel. group: {field: string} - campo por el que agrupar elementos. unique: {} - no requiere config, elimina duplicados. reverse: {} - no requiere config, invierte el orden del array. slice: {start?: number, end?: number} - índices de inicio y fin para cortar el array."
         },
         "outputPath": {"type": "string"}
       },
@@ -187,7 +193,7 @@
     
     "GetCurrentDateTime": {
       "type": "object",
-      "description": "Obtiene la fecha y hora actual en formato ISO 8601",
+      "description": "(Deprecated: use DateTime instead) Obtiene la fecha y hora actual en formato ISO 8601",
       "properties": {
         "timezone": {
           "type": "string",
@@ -212,7 +218,7 @@
     
     "ConvertTimezone": {
       "type": "object",
-      "description": "Convierte una fecha/hora de una zona horaria a otra",
+      "description": "(Deprecated: use DateTime instead) Convierte una fecha/hora de una zona horaria a otra",
       "properties": {
         "inputPath": {
           "type": "string",
@@ -245,7 +251,7 @@
     
     "DateCalculation": {
       "type": "object",
-      "description": "Realiza cálculos con fechas (sumar días, restar horas, etc.)",
+      "description": "(Deprecated: use DateTime instead) Realiza cálculos con fechas (sumar días, restar horas, etc.)",
       "properties": {
         "inputPath": {
           "type": "string",
@@ -300,7 +306,71 @@
       },
       "required": ["inputPath", "operation", "outputPath"]
     },
-    
+
+    "DateTime": {
+      "type": "object",
+      "description": "Unified date/time operation: get current time, convert timezones, or perform date arithmetic",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["now", "convert", "calculate"],
+          "description": "Operation mode: 'now' gets current date/time, 'convert' converts between timezones, 'calculate' adds/subtracts time units"
+        },
+        "timezone": {
+          "type": "string",
+          "description": "Timezone (e.g. 'UTC', 'America/New_York'). For 'now': output timezone. For 'convert': target timezone. For 'calculate': base date timezone"
+        },
+        "format": {
+          "type": "string",
+          "enum": ["iso8601", "timestamp", "custom"],
+          "description": "Output format. 'iso8601' (default): ISO 8601, 'timestamp': Unix timestamp, 'custom': use formatString"
+        },
+        "formatString": {
+          "type": "string",
+          "description": "Custom format string (only if format='custom'). Uses Python strftime format"
+        },
+        "input": {
+          "type": "string",
+          "description": "Path to input date/time in data model (required for 'convert' and 'calculate' modes)"
+        },
+        "amount": {
+          "type": "number",
+          "description": "Amount of time units to add/subtract (only for 'calculate' mode)"
+        },
+        "unit": {
+          "type": "string",
+          "enum": ["years", "months", "days", "hours", "minutes", "seconds"],
+          "description": "Time unit for calculation (only for 'calculate' mode)"
+        },
+        "operation": {
+          "type": "string",
+          "enum": ["add", "subtract"],
+          "description": "Arithmetic operation (only for 'calculate' mode)"
+        },
+        "outputPath": {
+          "type": "string",
+          "description": "Path in data model to store the result"
+        }
+      },
+      "required": ["mode", "outputPath"]
+    },
+
+    "SetData": {
+      "type": "object",
+      "description": "Stores a literal value in the workflow data model",
+      "properties": {
+        "value": {
+          "type": ["string", "number", "boolean", "object", "array", "null"],
+          "description": "The literal value to store"
+        },
+        "outputPath": {
+          "type": "string",
+          "description": "Path in data model where to store the value"
+        }
+      },
+      "required": ["value", "outputPath"]
+    },
+
     "FormatText": {
       "type": "object",
       "description": "Formatea texto usando plantillas o transformaciones",
@@ -432,6 +502,42 @@
         }
       },
       "required": ["inputPath", "operation", "encoding", "outputPath"]
+    },
+
+    "ExecuteN8nWorkflow": {
+      "type": "object",
+      "description": "Ejecuta un workflow existente en una instancia n8n por su ID. Permite delegar operaciones complejas a workflows n8n ya configurados sin reescribirlos en A2E. La conexion a n8n se configura via config o variables de entorno N8N_URL y N8N_API_KEY.",
+      "properties": {
+        "workflowId": {
+          "type": "string",
+          "description": "ID del workflow en n8n a ejecutar"
+        },
+        "payload": {
+          "type": ["object", "string"],
+          "description": "Datos de entrada para el workflow. Puede ser un objeto literal o un path al data model (e.g. '/workflow/input_data')"
+        },
+        "n8nUrl": {
+          "type": "string",
+          "description": "URL de la instancia n8n (e.g. 'http://localhost:5678'). Opcional si se configura N8N_URL en env"
+        },
+        "n8nApiKey": {
+          "type": "string",
+          "description": "API key de n8n. Opcional si se configura N8N_API_KEY en env. Se recomienda usar credentialRef para no exponer la key en el workflow"
+        },
+        "waitForCompletion": {
+          "type": "boolean",
+          "description": "Si esperar a que la ejecucion termine (default: true)"
+        },
+        "timeoutMs": {
+          "type": "number",
+          "description": "Timeout en milisegundos (default: 30000)"
+        },
+        "outputPath": {
+          "type": "string",
+          "description": "Ruta donde guardar el resultado de la ejecucion. El resultado incluye: n8n_workflow_id, execution_id, status, finished, data, output"
+        }
+      },
+      "required": ["workflowId", "outputPath"]
     }
   }
 }

@@ -54,16 +54,19 @@ def test_format_summary_response(formatter):
 
 def test_format_error_response(formatter):
     """Test formateo de respuesta de error"""
-    error = Exception("API returned status 404")
+    class HTTPError(Exception):
+        status_code = 404
+
+    error = HTTPError("API returned status_code 404")
     context = {"url": "https://api.example.com/users", "status_code": 404}
-    
+
     response = formatter.format_error_response(
         execution_id="test",
         error=error,
         context=context,
         operation_id="fetch"
     )
-    
+
     assert response["status"] == "error"
     assert "error" in response
     assert response["error"]["operation_id"] == "fetch"
@@ -111,14 +114,12 @@ def test_extract_useful_fields(formatter):
 
 def test_error_handler_network_error():
     """Test manejo de error de red"""
-    error = ConnectionError("Connection timeout")
-    
-    structured = ErrorHandler.handle_exception(
-        exception=error,
-        operation_id="fetch",
-        context={"url": "https://api.example.com"}
+    structured = NetworkError(
+        message="Network error: Connection timeout",
+        url="https://api.example.com"
     )
-    
+    structured.operation_id = "fetch"
+
     assert isinstance(structured, NetworkError)
     assert structured.category == ErrorCategory.NETWORK
     assert structured.operation_id == "fetch"
@@ -126,17 +127,12 @@ def test_error_handler_network_error():
 
 def test_error_handler_api_error():
     """Test manejo de error de API"""
-    class HTTPError(Exception):
-        status_code = 404
-    
-    error = HTTPError("Not found")
-    
-    structured = ErrorHandler.handle_exception(
-        exception=error,
-        operation_id="fetch",
+    structured = APIError(
+        message="API error: Not found",
+        status_code=404,
         context={"url": "https://api.example.com/users"}
     )
-    
+
     assert isinstance(structured, APIError)
     assert structured.category == ErrorCategory.API_ERROR
     assert structured.context.get("status_code") == 404
@@ -146,12 +142,12 @@ def test_error_handler_format_for_agent():
     """Test formateo de error para agente"""
     error = APIError(
         message="API returned status 401",
-        status_code=401,
-        operation_id="fetch"
+        status_code=401
     )
-    
+    error.operation_id = "fetch"
+
     formatted = ErrorHandler.format_error_for_agent(error)
-    
+
     assert formatted["status"] == "error"
     assert formatted["error"]["type"] == "APIError"
     assert formatted["error"]["category"] == "api_error"

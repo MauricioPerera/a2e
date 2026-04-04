@@ -13,6 +13,7 @@ from auth.agent_auth import AgentAuth
 from validation.workflow_validator import WorkflowValidator, ValidationLevel
 from monitoring.audit_logger import AuditLogger
 from responses.response_formatter import ResponseFormat
+from monitoring.audit_logger import ExecutionStatus
 
 
 @pytest.fixture
@@ -54,6 +55,7 @@ def full_system():
             "logger": logger,
             "api_key": api_key
         }
+        logger.close()
 
 
 @pytest.mark.asyncio
@@ -61,16 +63,11 @@ async def test_full_workflow_execution(full_system):
     """Test ejecución completa de workflow"""
     executor = full_system["executor"]
     
-    workflow = """
-{"operationUpdate": {"workflowId": "test", "operations": [
-  {"id": "wait", "operation": {"Wait": {"duration": 10}}}
-]}}
-{"beginExecution": {"workflowId": "test", "root": "wait"}}
-"""
-    
+    workflow = '{"operationUpdate": {"workflowId": "test", "operations": [{"id": "wait", "operation": {"Wait": {"duration": 10}}}]}}\n{"beginExecution": {"workflowId": "test", "root": "wait"}}'
+
     executor.load_workflow(workflow, agent_id="agent-123")
     response = await executor.execute()
-    
+
     assert response["status"] == "success"
     assert "execution_id" in response
 
@@ -84,24 +81,16 @@ async def test_workflow_with_validation(full_system):
         auth=full_system["auth"],
         level=ValidationLevel.MODERATE
     )
-    
+
     # Workflow válido
-    valid_workflow = """
-{"operationUpdate": {"workflowId": "test", "operations": [
-  {"id": "wait", "operation": {"Wait": {"duration": 10}}}
-]}}
-"""
-    
+    valid_workflow = '{"operationUpdate": {"workflowId": "test", "operations": [{"id": "wait", "operation": {"Wait": {"duration": 10}}}]}}'
+
     is_valid, errors = validator.validate_workflow(valid_workflow, agent_id="agent-123")
     assert is_valid is True
-    
+
     # Workflow inválido (operación sin ID)
-    invalid_workflow = """
-{"operationUpdate": {"workflowId": "test", "operations": [
-  {"operation": {"Wait": {"duration": 10}}}
-]}}
-"""
-    
+    invalid_workflow = '{"operationUpdate": {"workflowId": "test", "operations": [{"operation": {"Wait": {"duration": 10}}}]}}'
+
     is_valid, errors = validator.validate_workflow(invalid_workflow, agent_id="agent-123")
     assert is_valid is False
 
@@ -156,23 +145,15 @@ async def test_error_handling_in_execution(full_system):
     executor = full_system["executor"]
     
     # Workflow con operación inválida
-    workflow = """
-{"operationUpdate": {"workflowId": "test", "operations": [
-  {"id": "invalid", "operation": {
-    "InvalidOperation": {"config": "invalid"}
-  }}
-]}}
-{"beginExecution": {"workflowId": "test", "root": "invalid"}}
-"""
+    workflow = '{"operationUpdate": {"workflowId": "test", "operations": [{"id": "invalid", "operation": {"InvalidOperation": {"config": "invalid"}}}]}}\n{"beginExecution": {"workflowId": "test", "root": "invalid"}}'
     
     executor.load_workflow(workflow, agent_id="agent-123")
     response = await executor.execute()
     
-    # Debe retornar error estructurado
-    assert response["status"] == "error" or response["status"] == "partial_success"
-    if response["status"] == "error":
-        assert "error" in response
-        assert "suggestions" in response.get("error", {})
+    # Debe retornar error o partial_success
+    assert response["status"] in ("error", "partial_success")
+    # La operación inválida debe estar marcada como fallida
+    assert response["operations"]["invalid"]["status"] == "failed"
 
 
 def test_monitoring_integration(full_system):

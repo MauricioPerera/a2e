@@ -50,6 +50,12 @@ class AuditLogger:
             logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
         )
         self.logger.addHandler(file_handler)
+
+    def close(self):
+        """Close all file handlers to release log files (needed for Windows temp dir cleanup)"""
+        for handler in self.logger.handlers[:]:
+            handler.close()
+            self.logger.removeHandler(handler)
     
     def log_execution_start(
         self,

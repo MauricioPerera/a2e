@@ -2,6 +2,7 @@
 Tests para Autenticación y Autorización de Agentes
 """
 
+import json
 import pytest
 import tempfile
 import os
@@ -11,9 +12,10 @@ from auth.agent_auth import AgentAuth, AgentAuthMiddleware
 @pytest.fixture
 def auth():
     """Fixture para crear sistema de autenticación limpio"""
-    with tempfile.NamedTemporaryFile(delete=False, suffix='.json') as f:
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.json', mode='w') as f:
+        json.dump({"agents": {}}, f)
         config_path = f.name
-    
+
     yield AgentAuth(config_path=config_path)
     
     # Cleanup
